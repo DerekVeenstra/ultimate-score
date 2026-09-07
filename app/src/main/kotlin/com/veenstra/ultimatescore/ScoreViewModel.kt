@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
  * Holds the current [GameState] and exposes the three actions the UI can take. All state
  * changes go through [reduce], so the logic worth testing lives in GameReducerTest, not here.
  *
- * @param historyStore where the event log is loaded from and saved to. Optional — the default
+ * @param historyStore where the game is loaded from and saved to. Optional — the default
  *   `null` means no persistence, which keeps this class constructible with no Android framework
  *   dependency in plain JVM unit tests (see ScoreViewModelTest). Production code supplies a real
  *   [DataStoreScoreRepository] (see ScoreScreen.kt's `rememberScoreViewModel`).
@@ -38,7 +38,7 @@ class ScoreViewModel(
     init {
         historyStore?.let { store ->
             viewModelScope.launch {
-                _state.value = GameState(store.loadHistory())
+                _state.value = store.load()
                 _isReady.value = true
             }
         }
@@ -48,12 +48,16 @@ class ScoreViewModel(
 
     fun undo() = dispatch(GameAction.Undo)
 
-    fun newGame() = dispatch(GameAction.NewGame)
+    /** Starts a fresh game with the teams chosen in the setup screen (defaults to US/THEM). */
+    fun newGame(
+        usTeam: TeamConfig = TeamConfig.DEFAULT_US,
+        themTeam: TeamConfig = TeamConfig.DEFAULT_THEM,
+    ) = dispatch(GameAction.NewGame(usTeam, themTeam))
 
     private fun dispatch(action: GameAction) {
         _state.update { reduce(it, action, clock()) }
         historyStore?.let { store ->
-            viewModelScope.launch { store.saveHistory(_state.value.history) }
+            viewModelScope.launch { store.save(_state.value) }
         }
     }
 }

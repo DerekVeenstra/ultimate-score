@@ -42,7 +42,7 @@ class ScoreViewModelPersistenceTest {
     @Test
     fun `loads persisted history on start and becomes ready`() {
         val store = FakeScoreHistoryStore(
-            initial = listOf(ScoreEvent(Team.US, 1000), ScoreEvent(Team.US, 2000), ScoreEvent(Team.THEM, 3000)),
+            initialHistory = listOf(ScoreEvent(Team.US, 1000), ScoreEvent(Team.US, 2000), ScoreEvent(Team.THEM, 3000)),
         )
         val vm = ScoreViewModel(historyStore = store)
 
@@ -86,17 +86,67 @@ class ScoreViewModelPersistenceTest {
 
         assertTrue(store.saved.isEmpty())
     }
+
+    @Test
+    fun `starting a game with chosen teams persists their names and colours`() {
+        val store = FakeScoreHistoryStore()
+        val vm = ScoreViewModel(historyStore = store, clock = { 0L })
+
+        vm.newGame(
+            usTeam = TeamConfig("Flaming Nipples", TeamColor.PINK),
+            themTeam = TeamConfig("Sockeye", TeamColor.BLUE),
+        )
+
+        assertEquals(TeamConfig("Flaming Nipples", TeamColor.PINK), store.savedState.usTeam)
+        assertEquals(TeamConfig("Sockeye", TeamColor.BLUE), store.savedState.themTeam)
+    }
+
+    @Test
+    fun `a persisted game restores its team names and colours, not just the score`() {
+        val store = FakeScoreHistoryStore(
+            initialState = GameState(
+                history = listOf(ScoreEvent(Team.US, 1000), ScoreEvent(Team.THEM, 2000)),
+                usTeam = TeamConfig("Flaming Throws", TeamColor.GRAY),
+                themTeam = TeamConfig("Sockeye", TeamColor.BLUE),
+            ),
+        )
+
+        val vm = ScoreViewModel(historyStore = store)
+
+        assertEquals("Flaming Throws", vm.state.value.usTeam.name)
+        assertEquals(TeamColor.GRAY, vm.state.value.usTeam.color)
+        assertEquals("Sockeye", vm.state.value.themTeam.name)
+        assertEquals(TeamColor.BLUE, vm.state.value.themTeam.color)
+        assertEquals(1, vm.state.value.us)
+        assertEquals(1, vm.state.value.them)
+    }
+
+    @Test
+    fun `scoring after choosing teams keeps persisting the team identities`() {
+        val store = FakeScoreHistoryStore()
+        val vm = ScoreViewModel(historyStore = store, clock = { 0L })
+        vm.newGame(usTeam = TeamConfig("Flaming Nipples", TeamColor.PINK))
+
+        vm.score(Team.US)
+
+        assertEquals("Flaming Nipples", store.savedState.usTeam.name)
+        assertEquals(1, store.savedState.us)
+    }
 }
 
 private class FakeScoreHistoryStore(
-    private val initial: List<ScoreEvent> = emptyList(),
+    initialHistory: List<ScoreEvent> = emptyList(),
+    private val initialState: GameState = GameState(history = initialHistory),
 ) : ScoreHistoryStore {
-    var saved: List<ScoreEvent> = initial
+    var savedState: GameState = initialState
         private set
 
-    override suspend fun loadHistory(): List<ScoreEvent> = initial
+    /** Convenience for the many assertions that only care about the persisted event log. */
+    val saved: List<ScoreEvent> get() = savedState.history
 
-    override suspend fun saveHistory(history: List<ScoreEvent>) {
-        saved = history
+    override suspend fun load(): GameState = initialState
+
+    override suspend fun save(state: GameState) {
+        savedState = state
     }
 }

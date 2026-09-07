@@ -9,6 +9,7 @@ wearComposeFoundation = "1.6.2"
 wearComposeUiTooling = "1.6.2"
 wearToolingPreview = "1.0.0"
 wear = "1.4.0"
+wearInput = "1.2.0"
 datastorePreferences = "1.2.1"
 lifecycleRuntimeKtx = "2.11.0"
 junit = "4.13.2"
@@ -26,6 +27,7 @@ androidx-wear-compose-foundation = { group = "androidx.wear.compose", name = "co
 androidx-wear-compose-ui-tooling = { group = "androidx.wear.compose", name = "compose-ui-tooling", version.ref = "wearComposeUiTooling" }
 androidx-wear-tooling-preview = { group = "androidx.wear", name = "wear-tooling-preview", version.ref = "wearToolingPreview" }
 androidx-wear = { group = "androidx.wear", name = "wear", version.ref = "wear" }
+androidx-wear-input = { group = "androidx.wear", name = "wear-input", version.ref = "wearInput" }
 
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 

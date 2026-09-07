@@ -6,14 +6,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,8 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -39,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -68,7 +64,7 @@ private val REFERENCE_HEIGHT_DP = 227.dp
  * Compose theme's default primary: a fixed, saturated color reads more reliably than a themed
  * one in direct sunlight, and it never changes across system theme updates.
  */
-private val AccentColor = Color(0xFF00E5A0)
+val AccentColor = Color(0xFF00E5A0)
 
 @Composable
 private fun rememberScoreViewModel(): ScoreViewModel {
@@ -108,25 +104,24 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
 
             else -> {
                 val state by viewModel.state.collectAsState()
-                var showNewGameConfirm by remember { mutableStateOf(false) }
+                var showNewGameSetup by remember { mutableStateOf(false) }
 
                 MaterialTheme {
-                    if (showNewGameConfirm) {
-                        NewGameConfirmScreen(
-                            us = state.us,
-                            them = state.them,
-                            onConfirm = {
-                                viewModel.newGame()
-                                showNewGameConfirm = false
+                    if (showNewGameSetup) {
+                        NewGameSetupScreen(
+                            currentState = state,
+                            onStart = { us, them ->
+                                viewModel.newGame(us, them)
+                                showNewGameSetup = false
                             },
-                            onCancel = { showNewGameConfirm = false },
+                            onCancel = { showNewGameSetup = false },
                         )
                     } else {
                         ScoreScreen(
                             state = state,
                             onScore = viewModel::score,
                             onUndo = viewModel::undo,
-                            onRequestNewGame = { showNewGameConfirm = true },
+                            onRequestNewGame = { showNewGameSetup = true },
                         )
                     }
                 }
@@ -173,18 +168,37 @@ fun ScoreScreen(
         val themContentHeight = (halfHeight - footerHeight).coerceAtLeast(40.dp)
         val contentHeight = minOf(usContentHeight, themContentHeight)
         val numeralSize = (contentHeight.value * 0.56f).coerceAtLeast(24f).sp
-        val labelSize = (contentHeight.value * 0.15f).coerceAtLeast(9f).sp
+
+        // Team names are user-chosen and variable-length now, so the label has to shrink for a
+        // long one ("FLAMING NIPPLES") where "US" had room to spare. Sized off the longer of the
+        // two names so both halves keep matching label text.
+        val longestName = maxOf(state.usTeam.name.length, state.themTeam.name.length)
+        val labelSize = (contentHeight.value * 0.15f)
+            .coerceAtLeast(9f)
+            .let { if (longestName > 8) it * 0.78f else it }
+            .coerceAtLeast(8f)
+            .sp
+
+        // True-colour backgrounds (PLAN.md section 11 "True colours") can be light enough — GRAY,
+        // ORANGE — that white text would fail contrast outright, so each zone's text colour is
+        // computed from its own background rather than assumed to be white.
+        val usBackground = state.usTeam.color.backgroundArgb
+        val themBackground = state.themTeam.color.backgroundArgb
+        val usTextColor = Color(textColorArgbFor(usBackground))
+        val themTextColor = Color(textColorArgbFor(themBackground))
 
         Column(modifier = Modifier.fillMaxSize()) {
             HoldToScoreZone(
                 team = Team.US,
-                label = "US",
+                label = state.usTeam.name,
                 score = state.us,
                 labelOnTop = true,
                 arc = ArcEdge.Top,
                 numeralSize = numeralSize,
                 labelSize = labelSize,
                 contentAreaHeight = usContentHeight,
+                background = Color(usBackground),
+                textColor = usTextColor,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(halfHeight),
@@ -200,13 +214,15 @@ fun ScoreScreen(
 
             HoldToScoreZone(
                 team = Team.THEM,
-                label = "THEM",
+                label = state.themTeam.name,
                 score = state.them,
                 labelOnTop = false,
                 arc = ArcEdge.Bottom,
                 numeralSize = numeralSize,
                 labelSize = labelSize,
                 contentAreaHeight = themContentHeight,
+                background = Color(themBackground),
+                textColor = themTextColor,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(halfHeight),
@@ -218,6 +234,7 @@ fun ScoreScreen(
             canUndo = state.canUndo,
             onUndo = onUndo,
             onRequestNewGame = onRequestNewGame,
+            iconColor = themTextColor,
             iconSize = (20 * heightRatio).coerceAtLeast(16f).sp,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -251,6 +268,13 @@ private fun HoldToScoreZone(
      * same-size sub-box behave identically to centering in the full zone — see ScoreScreen().
      */
     contentAreaHeight: Dp,
+    /** This team's half-screen background — its true colour, or black for no colour. */
+    background: Color,
+    /**
+     * Whichever of black/white best contrasts with [background] (see [textColorArgbFor]) — a
+     * true-colour background can be light enough that white numerals would fail contrast.
+     */
+    textColor: Color,
     modifier: Modifier = Modifier,
     onScored: () -> Unit,
 ) {
@@ -260,6 +284,7 @@ private fun HoldToScoreZone(
 
     Box(
         modifier = modifier
+            .background(background)
             .pointerInput(team) {
                 detectTapGestures(
                     onPress = {
@@ -285,15 +310,19 @@ private fun HoldToScoreZone(
                 text = score.toString(),
                 fontSize = numeralSize,
                 fontWeight = FontWeight.Bold,
+                color = textColor,
                 textAlign = TextAlign.Center,
             )
         }
         val teamLabel = @Composable {
             Text(
-                text = label,
+                text = label.uppercase(),
                 fontSize = labelSize,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                color = textColor.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 10.dp),
             )
         }
 
@@ -352,6 +381,8 @@ private fun UndoControl(
     onUndo: () -> Unit,
     onRequestNewGame: () -> Unit,
     iconSize: TextUnit,
+    /** Overlays THEM's background (see ScoreScreen()), so its colour comes from that team. */
+    iconColor: Color,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -365,56 +396,7 @@ private fun UndoControl(
         Text(
             text = "↺",
             fontSize = iconSize,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (canUndo) 0.8f else 0.3f),
+            color = iconColor.copy(alpha = if (canUndo) 0.8f else 0.3f),
         )
-    }
-}
-
-@Composable
-private fun NewGameConfirmScreen(
-    us: Int,
-    them: Int,
-    onConfirm: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(PaddingValues(horizontal = 24.dp)),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(text = "New game?", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text(
-            text = "Current score $us–$them will be lost.",
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-        )
-
-        Box(
-            modifier = Modifier
-                .padding(top = 16.dp)
-                .fillMaxWidth()
-                .height(40.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.error)
-                .clickable(onClick = onConfirm),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(text = "Start new game", fontSize = 14.sp, color = MaterialTheme.colorScheme.onError)
-        }
-
-        Box(
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .fillMaxWidth()
-                .height(40.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .clickable(onClick = onCancel),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(text = "Cancel", fontSize = 14.sp)
-        }
     }
 }

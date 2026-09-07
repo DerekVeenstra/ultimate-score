@@ -5,12 +5,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +39,19 @@ private val AmbientTextColor = Color(0xFFB0B0B0)
  */
 @Composable
 fun AmbientScoreScreen(state: GameState, offsetX: Dp, offsetY: Dp) {
+    val usLine = "${state.usTeam.name.uppercase()} ${state.us}"
+    val themLine = "${state.themTeam.name.uppercase()} ${state.them}"
+
+    // Team names are user-chosen, so these lines are no longer always as short as "US 8". Shrink
+    // for a long one rather than letting it run off the edge of a round screen. Note the
+    // background stays pure black whatever the teams' colours are — ambient is about burn-in and
+    // battery (PLAN.md section 3), which is exactly what a tinted background would work against.
+    val fontSize = when (maxOf(usLine.length, themLine.length)) {
+        in 0..10 -> 22.sp
+        in 11..16 -> 17.sp
+        else -> 14.sp
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -46,18 +61,24 @@ fun AmbientScoreScreen(state: GameState, offsetX: Dp, offsetY: Dp) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "US ${state.us}",
-                fontSize = 22.sp,
+                text = usLine,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Light,
                 color = AmbientTextColor,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp),
             )
             Text(
-                text = "THEM ${state.them}",
-                fontSize = 22.sp,
+                text = themLine,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Light,
                 color = AmbientTextColor,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp),
             )
         }
     }

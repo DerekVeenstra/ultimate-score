@@ -85,7 +85,7 @@ class GameReducerTest {
         state = reduce(state, GameAction.Score(Team.US), now = 1000)
         state = reduce(state, GameAction.Score(Team.US), now = 2000)
         state = reduce(state, GameAction.Score(Team.THEM), now = 3000)
-        state = reduce(state, GameAction.NewGame, now = 4000)
+        state = reduce(state, GameAction.NewGame(), now = 4000)
         assertEquals(GameState(), state)
     }
 }

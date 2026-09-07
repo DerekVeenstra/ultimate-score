@@ -1,8 +1,9 @@
 # Ultimate Frisbee Score Keeper — Wear OS App
 
-**Status:** planning
+**Status:** v1 complete (all 7 phases) + team names/colours with true-colour backgrounds (sections 11-12), all verified on a real TicWatch Pro 5 Enduro
 **Last updated:** 2026-09-07
 **Target device:** TicWatch (primary), any Wear OS 3+ smartwatch (secondary)
+**Repo:** https://github.com/DerekVeenstra/ultimate-score
 
 ---
 
@@ -404,7 +405,7 @@ in direct sunlight conditions, new-game confirm screen.
 - Full test suite still 18/18 passing throughout every change in this phase; `assembleDebug`
   succeeded after each edit.
 
-### Phase 7 — Real device 🔶 in progress (2026-09-07)
+### Phase 7 — Real device ✅ done (2026-09-07)
 Wireless debug onto the TicWatch. Play a real game with it.
 **Done when:** it survived a game and the hold timing feels right on the wrist.
 
@@ -455,10 +456,8 @@ Wireless debug onto the TicWatch. Play a real game with it.
     confirmed the final version — divider centered, "THEM" fully visible with a clear gap above
     the undo icon, no overlap. Full 18/18 test suite re-verified after each of the three code
     changes.
-- **Remaining, physical, on the user's plate:** actually holding/tapping with a real finger to
-  judge whether the 400ms hold timing feels right, the ambient/always-on check on real hardware
-  (no artificial eviction timing like the emulator's ~70s), sunlight legibility, and a glance at
-  the real launcher icon (impossible to check on the AVDs — see Phase 6).
+- **Confirmed by Derek playing on the real watch:** hold-to-score timing, undo, new game,
+  ambient/always-on, and the app icon all check out. v1 is done.
 
 ---
 
@@ -512,3 +511,143 @@ None of this gets built in v1.
 | Theme | Dark only | Matches Wear OS system/ambient conventions, OLED-friendly; verify sunlight legibility on-device in Phase 7 before adding a second theme |
 
 No open questions remain. Ready to start Phase 0.
+
+*(The "fixed US/THEM labels" decision above was superseded post-v1 — see section 11.)*
+
+---
+
+## 11. Post-v1: team names and colours (2026-09-07)
+
+Starting a new game now lets you name and colour each team. Both are optional and default to
+exactly the v1 look, so nothing about the "just keep score" path got slower.
+
+### Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Background treatment | **True colour** (superseded from deep tint — see below) | Derek tried the deep-tint version and didn't like it; asked for true colours instead. |
+| Name entry | Presets for US, free text for the opponent | Your own team is one of a few knowns; opponents change every game. Avoids a keyboard for the common case. |
+| Setup flow | Setup screen **replaces** the old confirm | Score-loss warning is inline instead, so a quick start is the same tap count as v1. |
+| Palette | 8 fixed swatches | Tappable on a 1.4" screen; a hue picker would be miserable mid-game. |
+| Ambient mode | Stays **pure black** regardless of team colours | Ambient exists for burn-in and battery (section 3) — a tinted background works directly against that. |
+| Presets | "Flaming Nipples" (pink), "Flaming Throws" (gray), plus plain "US" | As requested. Picking one sets name *and* colour; the swatches still override afterwards. |
+| Stickiness | Setup pre-populates from the current game | A recurring team stays selected; no re-picking every game. |
+
+### Implementation
+
+- `TeamConfig.kt` — `TeamColor` (8 entries, each with swatch + tint ARGB as plain `Long`) and
+  `TeamConfig` (name + colour). Deliberately **no Compose/Android imports** so the whole model
+  layer stays JVM-testable; the UI converts to `Color` at point of use.
+- `GameState` gained `usTeam`/`themTeam`; `GameAction.NewGame` became a data class carrying the
+  chosen configs (defaulting to US/THEM), so `NewGame()` still means "reset to the v1 look".
+- `NewGameSetupScreen.kt` — scrollable `ScalingLazyColumn`: title, inline score-loss warning,
+  US presets, US palette, opponent name row, opponent palette, Start/Cancel. The opponent name
+  uses Wear's standard `RemoteInputIntentHelper` input activity (keyboard **and** voice
+  dictation) via `androidx.wear:wear-input` 1.2.0; a blank result falls back to "THEM".
+- Persistence extended from one key to five (`history`, `us_name`, `us_color`, `them_name`,
+  `them_color`). The codecs were **extracted to pure top-level functions** so the round trip —
+  including reading back a game saved before this feature existed — is unit-testable.
+- Score screen: each half's background is its team's tint; labels are the team names, uppercased,
+  `maxLines = 1` with ellipsis, and shrunk ~22% when either name runs long (so "FLAMING NIPPLES"
+  fits without truncating). Ambient lines shrink by length the same way.
+
+### Verified on the emulator, by screenshot at each step
+
+Backward compatibility (a game already saved on-device loads with the plain v1 look), the full
+setup screen and its scrolling, preset selection auto-applying its colour, the palette, the real
+`RemoteInputActivity` round trip (typed "Sockeye", got it back), starting a game, scoring on the
+tinted backgrounds, persistence across a **confirmed process kill**, ambient rendering with a long
+name on a still-pure-black background, the gray "Flaming Throws" preset, and reverting to no
+colour restoring the exact v1 appearance while keeping a custom name.
+
+Tests went from 18 to **39**, all passing — new suites for the team model (`TeamConfigTest`,
+including an assertion that *every* palette tint is dark enough to keep white numerals legible)
+and for the serialization codecs (`ScorePersistenceCodecTest`, including the pre-feature
+save-data case and corrupt-input handling).
+
+### Verified on the real TicWatch Pro 5 Enduro (2026-09-07)
+
+- Confirmed on actual AMOLED, not just the emulator: the deep pink tint for Flaming Nipples is
+  clearly distinguishable from pure black (THEM's default half), and "FLAMING NIPPLES" is fully
+  legible at the shrunk label size — no truncation. This was the main open question after the
+  emulator pass, since real AMOLED contrast/color reproduction can differ meaningfully from an
+  emulator's rendering.
+- Hold-to-score, undo, and persistence across a confirmed process kill all still work correctly
+  with tinted backgrounds. Score survived a full ambient round-trip (1–1 before and after).
+- **Tooling limitation, not an app bug:** `adb screencap` came back solid black while the watch
+  was in ambient, even though `dumpsys power` showed `mWakefulness=Dozing`, the activity stayed
+  `ResumedActivity`, the process was alive, and logcat had zero exceptions — all the signals a
+  correctly-functioning ambient screen would show. This real watch's AOD compositing path
+  appears to bypass the framebuffer `screencap` reads, unlike the emulator (no dedicated AOD
+  hardware, renders ambient in software, `screencap` could see it fine there). Ambient on real
+  hardware is architecturally confirmed working; a literal screenshot of it isn't obtainable
+  this way, so a plain visual look by the user is the last piece of confirmation left.
+- Incidentally hit and worked around a real-hardware testing wrinkle: this watch's screen timeout
+  is 10s, shorter than the round-trip latency between adb commands issued a few seconds apart,
+  causing several early attempts to land on an already-dimmed screen. Temporarily raised
+  `screen_off_timeout` to 120s for the test session and **restored it to 10000 (its original
+  value) afterward** — worth knowing if testing on-device again.
+- Full crash sweep across the whole session: clean.
+
+---
+
+## 12. Post-v1: true colours, not tinted (2026-09-07)
+
+Derek tried the deep-tint backgrounds from section 11 on the real watch and didn't like the
+look — asked for true, full-saturation colours instead.
+
+### The contrast problem this creates, and how it's handled
+
+Full saturation was one of the two background options originally considered (section 11's
+question round) and explicitly not picked *because* several of the 8 palette colours are light
+enough that white numerals lose meaningful contrast on them — this isn't hypothetical, it's
+measurable. Computing actual WCAG contrast ratios for white text against each true-colour swatch:
+
+| Colour | vs. white text | vs. black text |
+|---|---|---|
+| PINK | 4.35:1 | **4.83:1** |
+| GRAY | 2.68:1 (fails 3:1) | **7.84:1** |
+| BLUE | 3.12:1 | **6.72:1** |
+| GREEN | 2.78:1 (fails 3:1) | **7.56:1** |
+| ORANGE | 2.16:1 (fails badly) | **9.74:1** |
+| PURPLE | **6.30:1** | 3.33:1 |
+| RED | 3.68:1 | **5.70:1** |
+
+Keeping white text unconditionally would have made GRAY, GREEN, and ORANGE genuinely hard to
+read (ORANGE in particular fails even the relaxed large-text WCAG threshold) — a real legibility
+regression against design principle #1 ("Glanceable," section 1), not a cosmetic nitpick. So
+implementing "true colours" **also** required picking the right text colour per background,
+which the request didn't ask for explicitly but the app's core premise depends on.
+
+### Implementation
+
+- `TeamColor.tintArgb` removed; `swatchArgb` (already the true colour, used for the picker dot)
+  is now also the background via a new `backgroundArgb` property — `NONE` still resolves to pure
+  black, so the no-colour path is pixel-identical to before this and section 11's change.
+- New pure functions in `TeamConfig.kt` — `relativeLuminance`, `contrastRatio`, and
+  `textColorArgbFor` — implement the actual WCAG relative-luminance formula (not an approximation)
+  and pick whichever of black/white contrasts better against a given background. Plain `Long`
+  ARGB in, plain `Long` ARGB out, so this is fully JVM-testable with no Android dependency, same
+  as the rest of the model layer.
+- `HoldToScoreZone` and `UndoControl` now take an explicit `textColor`/`iconColor` computed from
+  each team's `backgroundArgb`, instead of assuming white. The secondary label text's existing
+  70%-alpha dimming was re-checked against the alpha-blended result for every colour (not just
+  assumed safe) — every case still clears 3:1 even blended, so no change was needed there.
+- The divider between US/THEM was **almost** changed to a dark line to "fit" colour or
+  backgrounds better, then reverted before shipping: the app's window background is black, so a
+  translucent *black* divider would have been nearly invisible in the default (no colour chosen)
+  case — by far the most common one. Caught by checking what's actually behind it before
+  changing it, not by trial and error on-device.
+
+### Verified on the real TicWatch Pro 5 Enduro
+
+Specifically re-tested the two colours the contrast table flags as needing black text — GRAY and
+ORANGE — since those were the ones a wrong guess would have broken most visibly. Both render at
+full saturation with crisp black numerals and black undo icon, clearly legible, on actual AMOLED.
+Also re-confirmed hold-to-score, scoring, and persistence across a **confirmed process kill**
+(force-stopped, verified via `pidof` the process was dead, relaunched) all still work correctly
+with true-colour backgrounds — score and colours both survived intact. Full crash sweep: clean.
+
+Test suite grew from 39 to **42** — `TeamConfigTest` gained WCAG-contrast assertions (every
+colour must clear 3:1, the large/bold-text threshold that applies to these numerals) replacing
+the old "every tint is dark enough" checks that no longer apply now that tinting is gone.
