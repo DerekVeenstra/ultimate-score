@@ -1,6 +1,6 @@
 # Ultimate Frisbee Score Keeper — Wear OS App
 
-**Status:** v1 complete (all 7 phases) + team names/colours with true-colour backgrounds (sections 11-12), all verified on a real TicWatch Pro 5 Enduro
+**Status:** v1 complete (all 7 phases) + team names/colours with true-colour backgrounds (sections 11-12, verified on a real TicWatch Pro 5 Enduro) + saved team presets on both sides (section 13, unit-tested; not yet verified on-device)
 **Last updated:** 2026-09-07
 **Target device:** TicWatch (primary), any Wear OS 3+ smartwatch (secondary)
 **Repo:** https://github.com/DerekVeenstra/ultimate-score
@@ -526,11 +526,11 @@ exactly the v1 look, so nothing about the "just keep score" path got slower.
 | Decision | Choice | Why |
 |---|---|---|
 | Background treatment | **True colour** (superseded from deep tint — see below) | Derek tried the deep-tint version and didn't like it; asked for true colours instead. |
-| Name entry | Presets for US, free text for the opponent | Your own team is one of a few knowns; opponents change every game. Avoids a keyboard for the common case. |
+| Name entry | Presets for US, free text for the opponent (**superseded by section 13** — both sides are now saved presets, no free text on either side) | Your own team is one of a few knowns; opponents change every game. Avoids a keyboard for the common case. |
 | Setup flow | Setup screen **replaces** the old confirm | Score-loss warning is inline instead, so a quick start is the same tap count as v1. |
 | Palette | 8 fixed swatches | Tappable on a 1.4" screen; a hue picker would be miserable mid-game. |
 | Ambient mode | Stays **pure black** regardless of team colours | Ambient exists for burn-in and battery (section 3) — a tinted background works directly against that. |
-| Presets | "Flaming Nipples" (pink), "Flaming Throws" (gray), plus plain "US" | As requested. Picking one sets name *and* colour; the swatches still override afterwards. |
+| Presets | "Flaming Nipples" (pink), "Flaming Throws" (gray), plus plain "US" (**superseded by section 13** — these hardcoded presets were deleted; both lists now start empty and are user-created) | As requested. Picking one sets name *and* colour; the swatches still override afterwards. |
 | Stickiness | Setup pre-populates from the current game | A recurring team stays selected; no re-picking every game. |
 
 ### Implementation
@@ -544,6 +544,10 @@ exactly the v1 look, so nothing about the "just keep score" path got slower.
   US presets, US palette, opponent name row, opponent palette, Start/Cancel. The opponent name
   uses Wear's standard `RemoteInputIntentHelper` input activity (keyboard **and** voice
   dictation) via `androidx.wear:wear-input` 1.2.0; a blank result falls back to "THEM".
+  **Superseded by section 13**: the per-game colour palette on this main screen is gone (colour
+  is now only set when creating/editing a saved preset), and "US presets"/"opponent name row" are
+  both replaced by the two saved-preset lists described there. The `RemoteInputIntentHelper`
+  mechanics described here are unchanged and now live in a shared helper (section 13).
 - Persistence extended from one key to five (`history`, `us_name`, `us_color`, `them_name`,
   `them_color`). The codecs were **extracted to pure top-level functions** so the round trip —
   including reading back a game saved before this feature existed — is unit-testable.
@@ -651,3 +655,319 @@ with true-colour backgrounds — score and colours both survived intact. Full cr
 Test suite grew from 39 to **42** — `TeamConfigTest` gained WCAG-contrast assertions (every
 colour must clear 3:1, the large/bold-text threshold that applies to these numerals) replacing
 the old "every tint is dark enough" checks that no longer apply now that tinting is gone.
+
+---
+
+## 13. Post-v1: saved team presets, both sides (2026-09-07)
+
+Section 11 gave "your team" three hardcoded presets and left the opponent as free text typed
+fresh every game with no memory. Derek asked to replace that entirely with user-created,
+watch-local, persisted presets on *both* sides — every decision below was specified by him, not
+inferred.
+
+### Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Lists | Two independent lists: "my teams" and "opponents" | Stored, managed, and rendered separately — there's no shared numbering or ordering between them. |
+| Starting content | Both lists start **empty**; `TeamConfig.US_PRESETS` deleted outright | The three hardcoded presets ("Flaming Nipples", "Flaming Throws", plain "US") aren't seeded into the new store — a fresh install has nothing until the user creates something. |
+| Creation | Inline: a "+ New team..." row at the end of each list — name, then colour, then it's saved *and* selected for this game in one pass | No separate "manage teams" screen to visit first; creating a team is part of picking one. |
+| Management | Long-press a preset row (`Modifier.combinedClickable`) to rename/recolour/delete it | Tap picks a team for this game; a second gesture is needed for anything else, and long-press is the existing pattern (undo control already uses it for "new game"). |
+| Colour | Removed from the main setup screen entirely; only set when creating or editing a preset | Colour is now a property of the *team*, not of "this game" — the per-game `ColorSwatches` row this replaces no longer makes sense once colour lives on the preset. |
+| Empty selection | Still works: pick nothing on either side and you get `TeamConfig.DEFAULT_US`/`DEFAULT_THEM` — the exact v1 look | No regression to the "just keep score" path sections 1 and 11 both protect. |
+
+### Why a separate `TeamPreset` type instead of reusing `TeamConfig`
+
+`TeamConfig(name, color)` stays exactly as it was — it's what `GameState` and its DataStore
+persistence already understand, and section 11's setup flow used *name equality*
+(`usTeam.name == preset.name`) to figure out which preset was selected. That was already a latent
+bug (two presets sharing a name, or a rename, would misattribute the selection) that a bare
+`TeamConfig` has no way to fix, because it has nothing to be identified by other than the fields
+that are also what a user edits. `TeamPreset(id, name, color)` adds exactly one thing —
+a stable `id`, generated at creation time (wall-clock millis; injectable in `ScoreViewModel` for
+deterministic tests) — and `toConfig()` converts to what the running game actually needs. The
+setup screen now tracks selection by id, so a rename can never change *which* preset is selected,
+only what it's called.
+
+### Storage: control characters as separators, not JSON
+
+Preset names are arbitrary user text and *will* contain the punctuation the existing codecs use as
+separators — commas (history's `US:1699...,THEM:1699...`) and colons (`TEAM:MILLIS` pairs, and
+`us_name`/`us_color` are separate keys but a name could still contain either character). Rather
+than hand-roll an escaping scheme for two specific characters (and its inevitable edge-case bugs —
+an unescaped separator inside an escaped one, doubled escape characters, etc.), `encodePresets`/
+`decodePresets` (ScoreRepository.kt) use two ASCII control characters instead: U+001F (Unit
+Separator) between the three fields of one preset (`id`/`name`/`color`) and U+001E (Record
+Separator) between presets. A control character can never appear in ordinary typed text, so no
+escaping is needed at all — and to guarantee that stays true, `sanitizeName` (TeamConfig.kt, a
+generalization of section 11's inline blank-name-fallback logic in `TeamConfig.named`) strips
+every control character from a name *before* a `TeamConfig` or `TeamPreset` is ever built from it,
+not just at encode time. Same file, two new top-level DataStore keys (`my_team_presets`,
+`opponent_team_presets`) alongside the five section 11 already added — one `DataStoreScoreRepository`
+class now implements both `ScoreHistoryStore` and the new `TeamPresetStore` interface, since it's
+the same underlying `game_state` preferences file. Malformed records (wrong field count, blank
+id/name) are dropped rather than throwing, same policy as every other codec in this file; an
+unrecognized colour name falls back to `TeamColor.NONE` via the existing `decodeColor`.
+
+### ViewModel and selection semantics
+
+`ScoreViewModel` gained a `presets: StateFlow<TeamPresetLists>` (two lists, same as storage) and
+four actions — `addPreset`/`renamePreset`/`recolorPreset`/`deletePreset` — each taking a
+`PresetGroup` (`MY_TEAMS`/`OPPONENTS`) so one set of functions serves both lists instead of
+duplicating each into a "MyTeam" and "Opponent" variant. `presetStore` is optional/nullable the
+same way `historyStore` already was, for the same reason: `ScoreViewModelPresetTest` constructs
+the ViewModel with an in-memory fake and no Android dependency at all.
+
+Selection lives in `NewGameSetupScreen`'s own Compose state (by preset id), not in the ViewModel,
+because it's specific to "what's picked for the game about to start," not persisted state. Two
+rules were specified exactly: tapping an already-selected row deselects it (falling back to the
+default US/THEM identity for that side), and deleting the preset currently selected in the setup
+screen must also fall back to the default rather than leaving a dangling id pointing at nothing —
+both are handled in `NewGameSetupScreen` itself, at the point of the tap/delete, rather than by
+having the ViewModel try to reach into UI-owned selection state it has no business touching.
+
+### Setup screen: three screens as one piece of Compose state, not a nav graph
+
+`NewGameSetupScreen.kt` models its flow as a private `SetupMode` (`Picking`/`ChoosingColor`/
+`Editing`) rather than a second Activity or a Compose nav graph — a full nav graph would be
+overhead this app doesn't need anywhere else, and the whole app is already "one screen at a time."
+`Picking` is the normal two-list-plus-Start/Cancel view; tapping "+ New team..." collects a name
+via the RemoteInput launcher and moves to `ChoosingColor`, which reuses section 11's
+`ColorSwatches` composable (per Derek's explicit instruction not to delete it, just stop using it
+on the main screen); saving there calls `addPreset` and returns to `Picking` with the new preset
+selected. Long-pressing a preset row moves to `Editing`, which re-reads the *live* preset from
+`presets` every recomposition (not a snapshot taken when the screen was entered) so a recolour is
+reflected immediately in its own swatch highlight.
+
+The RemoteInput text-input launcher — needed now in three places (new my-team, new opponent,
+rename) where section 11 only needed it once — was factored into one `rememberTextInputLauncher`
+composable that builds the intent, launches it, and parses the result, parameterized only by the
+field's label. Each call site decides what a `null` (cancelled or blank) result means; every one
+of them treats it as "do nothing" rather than falling back to a placeholder name, so a cancelled
+creation never produces an empty-named preset.
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest` and `./gradlew :app:assembleDebug` both green. Test suite grew
+from 42 to **63**: `TeamConfigTest` lost the now-nonexistent "US presets" assertion and gained
+coverage for `TeamPreset.toConfig()`, `TeamPresetLists`' per-group read/replace, and `sanitizeName`
+(including a name containing the codec's own separator character); `ScorePersistenceCodecTest`
+gained the full preset-codec suite (round trip, names containing commas/colons, a name containing
+a raw separator character, malformed records, an unknown colour, absent/blank/empty input); a new
+`ScoreViewModelPresetTest` covers add/rename/recolour/delete each updating state and persisting,
+the two lists being independent, blank-rename being a no-op, and id generation using the injected
+generator rather than the wall clock in tests. Not verified on-device — that's Derek's to do.
+
+---
+
+## 14. Post-v1: swap PURPLE for WHITE (2026-09-07)
+
+Derek asked to replace PURPLE with WHITE in the colour picker, and to put white next to black.
+There's no separate "black" `TeamColor` — [NONE] (the no-colour default) is the one that reads as
+black, both by its pure-black `backgroundArgb` and its near-black `swatchArgb` dot — so WHITE was
+inserted as the enum entry immediately after `NONE`, making them the first pair in the picker's
+two-per-row grid (`ColorSwatches` in NewGameSetupScreen.kt renders `TeamColor.entries` in
+declaration order). No layout code changed — reordering the enum was enough.
+
+`textColorArgbFor` needed no change: it already picks whichever of black/white contrasts better
+against a background, and against pure white that's black by a wide margin, so WHITE swatches get
+black numerals automatically.
+
+A saved preset with colour `PURPLE` (from before this change) decodes via the existing
+"unrecognized colour name" fallback in `decodeColor` — it comes back as `NONE`, not a crash — so
+no persistence migration was needed, but a team someone coloured purple before today will show up
+black next time it's picked. Section 12's contrast table above still lists PURPLE's measured
+ratios as a historical record of that analysis; it's not re-run for WHITE since white vs.
+black/white text is not a borderline case the way several of the original 8 were.
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest` and `./gradlew :app:assembleDebug` both green — no test
+referenced `PURPLE` by name (`TeamColor.entries` is iterated generically), so nothing needed
+updating for the swap itself.
+
+---
+
+## 15. Post-v1: real launcher icon from Derek's logo (2026-09-07)
+
+Replaced the placeholder vector glyph (a plain flying disc with two motion lines) with Derek's
+actual logo: a flying disc wreathed in flame, in the app's now-familiar "Flaming ___" spirit.
+
+### Source file and why this went through raster, not vector
+
+Derek supplied the logo as a `.ai` file. There's no Illustrator, Inkscape, or any SVG/PDF
+converter on this Mac, so true vector path extraction wasn't on the table. What *is* available:
+modern `.ai` files are PDF-compatible under the hood (this one declares itself `PDF-1.5`), and
+macOS's built-in Quick Look (`qlmanage -t -s <px>`) will rasterize that PDF content at whatever
+resolution is requested — including far higher than the on-screen preview implies, because it's
+genuinely re-rendering the vector content each time, not upscaling a fixed bitmap. Rendered at
+5333×8000 (`qlmanage -t -s 8000`), which is more headroom than any Android density bucket needs,
+so going raster here cost no visible sharpness versus true vector — it just means a future edit
+to the logo has to happen in the original `.ai`, not by hand-editing an Android vector drawable.
+
+### Cropping and the background problem
+
+Quick Look's rasterization flattens onto an opaque white canvas — it doesn't preserve the `.ai`
+file's actual transparency, so the naive "make white pixels transparent" approach would have also
+punched a hole through the logo's own white disc face, which is legitimately white. Fixed with a
+connected-components pass (`scipy.ndimage.label` over a near-white mask, Pillow for the rest):
+only the near-white *region touching the crop's outer border* gets turned transparent; the disc's
+white interior, fully enclosed by its red ring, never touches that border and is untouched. Net
+result: a tightly-cropped PNG with a real alpha channel, `docs/logo.png` in the repo (the
+"flattened on black" version sits alongside it as `docs/logo-preview-black.png` for a quick look
+without opening an image editor).
+
+### Sizing it as an adaptive icon foreground
+
+The artwork is a diagonal "comet" — disc in one corner, flame trailing to the opposite one — which
+doesn't fill a square evenly. Checked the fit against Android's adaptive-icon safe zone (the
+guaranteed-visible 66/108 of the 108dp canvas) by measuring the artwork's actual max radius from
+canvas center in pixels rather than guessing: at 78% of canvas width, the farthest content point
+(a flame tip) sits at 96% of the circular mask's radius — comfortably inside a circular launcher
+mask with no clipping, confirmed by rendering the composited PNG through an actual circle-mask
+simulation before shipping it. The two *other* corners of the square stay empty — that's the
+source art's own diagonal shape, not a cropping mistake, and reads fine (arguably better) as
+directional motion rather than a centered blob.
+
+- `app/src/main/res/drawable/ic_launcher_foreground.xml` (the old vector) deleted.
+- `app/src/main/res/drawable-nodpi/ic_launcher_foreground.png` (1024×1024, RGBA) added — `nodpi`
+  because this is one raster asset scaled by Android at render time, not a set of per-density
+  exports; `mipmap-anydpi-v26/ic_launcher.xml` needed no change since the resource name
+  (`ic_launcher_foreground`) didn't change, only what backs it.
+- `colors.xml`'s `ic_launcher_background` (`#000000`) is unchanged — already matched the app's
+  black theme and gives the logo's flames and white disc good contrast.
+- No `android:roundIcon` in the manifest and no separate round mipmap exists, so there was only
+  one icon resource to replace.
+
+Not placed anywhere else in the app yet — there's no splash/about screen today, so `docs/logo.png`
+is just sitting in the repo for whenever (or if) one exists. Ask Derek before adding one rather
+than assuming a spot for it.
+
+### Verified
+
+`./gradlew :app:assembleDebug` green; confirmed the PNG actually made it into the built APK
+(`unzip -l`, uncompressed at its full 164KB, under `res/drawable-nodpi-v4/`) rather than trusting
+the Gradle exit code alone. Installed to the Wear emulator and screenshotted the real app-drawer
+icon at its actual on-screen size — legible and uncupped, matching the circle-mask simulation.
+Not yet installed on the real TicWatch; wireless ADB was offline when this was done.
+
+---
+
+## 16. Post-v1: icon fit and colour follow-ups (2026-09-07)
+
+Two rounds of feedback on section 15's icon, both from testing on the real TicWatch.
+
+### Round 1: bottom-left of the disc was getting clipped
+
+The circle-mask simulation in section 15 (artwork sized to 78% of canvas width, putting its
+farthest point at 96% of the mask's radius) looked fine in that simulation but clipped on the real
+watch. The simulation wasn't wrong so much as it was checking the wrong guarantee: Android's
+adaptive-icon contract only *guarantees* the inner ~61% radius (66/108 of the icon canvas) is
+visible on every compliant launcher — anything further out is shown or clipped at that launcher's
+discretion, and a perfect circle happening to contain 96%-of-radius content is not the same as
+that content being inside the *guaranteed* zone. Rescaled so the farthest artwork point sits at
+58% of the radius — safely inside the guarantee with margin, re-verified against the same
+circle-mask simulation plus a render at actual small launcher size before shipping again.
+
+### Round 2: two more recolours
+
+Requested change: the white sliver among the flame near the disc's bottom-right should be yellow,
+and the small white circle behind the lightning bolt (inside the disc, distinct from the disc
+face itself, which section 15 already made pink) should also be pink.
+
+Both used the same connected-components technique as section 15's pink disc face — identify the
+enclosed (non-background) white regions by component, then recolour by id rather than by
+position, since "enclosed" already rules out touching the actual transparent background. The
+small circle behind the bolt turned out to be *two* disconnected white fragments (plus a couple of
+sub-300px specks) — the lightning bolt's zigzag cuts all the way across it, splitting what looks
+like one circle into two separate enclosed regions — so all of those got the pink treatment
+together. The bottom-right sliver used yellow sampled directly from the artwork's own flame colour
+(`#FFCE00`, the dominant colour found across ~600K yellow-ish pixels in the source render) rather
+than an app palette colour, since it's meant to blend into the existing flame, not stand apart
+from it — unlike the disc face and small circle's pink, which was deliberately `TeamColor.PINK`
+to tie the icon to the app's own palette.
+
+### Verified
+
+`./gradlew :app:assembleDebug` green after each round. Re-ran the circle-mask simulation and a
+64×64 downscale render (to check legibility at actual tiny launcher size, not just the 1024px
+working resolution) before shipping the final version — the bolt mark stays readable at both
+sizes even against the now-pink background. Not yet confirmed on the real TicWatch for round 2;
+wireless ADB was intermittently offline throughout this session.
+
+---
+
+## 17. Post-v1: icon zoom, round 3 — center on the disc, then all the way in (2026-09-07)
+
+Two more rounds of on-device feedback, both about the icon feeling too small/washed out at
+section 16's safe-but-conservative 58%-of-radius sizing.
+
+### Round 3: "hard to see" — recenter on the disc, not the whole comet
+
+Diagnosed *why* uniformly scaling the whole comet shape up had already failed once (section 16's
+clipping report): the disc itself sits well off from the comet bounding box's own center (the
+flame trail's off to one side), so centering the *bounding box* put the disc off-center too — its
+own edge was almost as close to the clip boundary as the flame tip on the opposite side.
+Measured this directly rather than guessing: in the section-16 composition, the disc's own pixels
+reached 77% of the canvas radius (and that got clipped), while the current 58% build's disc-only
+reach was a proportionally-scaled ~47% (safe, but small).
+
+Fix: stop centering the bounding box: find the disc's own center and radius (by locating its pink
+fill directly, not by reusing old hand-copied coordinates) and center *that* in the canvas
+instead. This makes the disc's edge distance from canvas-center equal to just its own radius — no
+extra offset penalty — so it can be sized meaningfully larger (targeted 62% of canvas radius, well
+under the 77% figure already known to fail) while the flame trail, now off-center, bleeds and
+clips at the canvas edge instead. That trail was always the disposable, decorative part; the disc
+and lightning-bolt mark are the identity.
+
+### Round 4: "so it doesn't show the flames on the edge at all"
+
+Requested full elimination of visible flame, not just a bigger disc. Sampled pink-colour coverage
+along circles of increasing radius from the disc's center (every 0.25° at 10px radius steps) to
+find exactly how far out the disc stays **solid pink at every angle** — it holds 100% to ~410px,
+then a flame accent (the bottom-right sliver from section 16, round 2) starts intruding beyond
+that. Recentered and zoomed so the canvas half-side sits at 390px in that same coordinate space —
+inside the measured all-pink radius with a small margin — meaning no flame-coloured pixel can
+appear in frame at all, regardless of what fraction of the canvas any given launcher's mask
+actually shows. The resulting icon is a plain pink disc with the lightning-bolt mark and no fire
+motif visible; flagged that trade-off to Derek rather than silently discarding the flame branding.
+Confirmed installed and working on the real TicWatch, not just simulated.
+
+### Verified
+
+`./gradlew :app:assembleDebug` green after both rounds; each was checked against a circle-mask
+simulation and a 64×64 downscale render before shipping, then installed and confirmed via
+`dumpsys package`'s `lastUpdateTime` on the real TicWatch (not just Success from `pm install`,
+since the wireless ADB connection had a habit of dying mid-command earlier in this session).
+
+---
+
+## 18. Post-v1: NONE colour dot missing from the presets list (2026-09-07)
+
+Derek made an opponent preset and recoloured it to the near-black `NONE` swatch (the one added
+next to WHITE in section 14, specifically because it visually reads as "black" — see that
+section's own reasoning) — and the list stopped showing any colour dot next to that team's name
+at all, as if the colour hadn't saved.
+
+It had saved; the dot was being deliberately suppressed. `SelectableRow`'s
+`swatch != null && swatch != TeamColor.NONE` check predates presets entirely — it's section 11-era
+logic for a world where `NONE` only ever meant "nothing chosen yet," so hiding its dot made sense.
+Every row that reaches `SelectableRow` today, though, already carries a real, saved
+`preset.color` — a preset coloured `NONE` is just as deliberate a choice as one coloured `PINK`,
+and section 14 already established that this exact swatch is *supposed* to be pickable as "black."
+Suppressing it there was simply stale.
+
+Fix: `swatch != null` alone decides whether to draw the dot; `null` (never `TeamColor.NONE`) is
+what the "+ New team..." action rows already pass to mean "no colour concept here," so nothing
+about the null-check contract changed. Also added a thin translucent white outline to every dot,
+in both the list row and the colour-picker grid's unselected swatches — `NONE`'s dot
+(`#2A2A2A`) sits close in luminance to the list row's own translucent-white-on-black background
+(closest when the row is selected), and to the picker screen's plain black background when
+unselected, so without an outline the fix would have made the dot present but still nearly
+invisible in exactly the cases that motivated it.
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest :app:assembleDebug` — 63/63 tests green (no test covered this
+purely-visual condition), build green. Installed and confirmed on the real TicWatch via
+`dumpsys package`'s `lastUpdateTime`.

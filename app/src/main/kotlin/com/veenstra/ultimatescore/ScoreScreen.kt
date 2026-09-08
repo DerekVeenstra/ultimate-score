@@ -71,7 +71,12 @@ private fun rememberScoreViewModel(): ScoreViewModel {
     val appContext = LocalContext.current.applicationContext
     return viewModel(
         factory = viewModelFactory {
-            initializer { ScoreViewModel(historyStore = DataStoreScoreRepository(appContext)) }
+            initializer {
+                // One DataStoreScoreRepository instance implements both stores (PLAN.md section
+                // 13) — same underlying `game_state` preferences file, just different keys.
+                val repository = DataStoreScoreRepository(appContext)
+                ScoreViewModel(historyStore = repository, presetStore = repository)
+            }
         },
     )
 }
@@ -108,13 +113,19 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
 
                 MaterialTheme {
                     if (showNewGameSetup) {
+                        val presets by viewModel.presets.collectAsState()
                         NewGameSetupScreen(
                             currentState = state,
+                            presets = presets,
                             onStart = { us, them ->
                                 viewModel.newGame(us, them)
                                 showNewGameSetup = false
                             },
                             onCancel = { showNewGameSetup = false },
+                            onAddPreset = viewModel::addPreset,
+                            onRenamePreset = viewModel::renamePreset,
+                            onRecolorPreset = viewModel::recolorPreset,
+                            onDeletePreset = viewModel::deletePreset,
                         )
                     } else {
                         ScoreScreen(
@@ -173,10 +184,10 @@ fun ScoreScreen(
         // long one ("FLAMING NIPPLES") where "US" had room to spare. Sized off the longer of the
         // two names so both halves keep matching label text.
         val longestName = maxOf(state.usTeam.name.length, state.themTeam.name.length)
-        val labelSize = (contentHeight.value * 0.15f)
-            .coerceAtLeast(9f)
-            .let { if (longestName > 8) it * 0.78f else it }
-            .coerceAtLeast(8f)
+        val labelSize = (contentHeight.value * 0.20f)
+            .coerceAtLeast(10f)
+            .let { if (longestName > 8) it * 0.85f else it }
+            .coerceAtLeast(10f)
             .sp
 
         // True-colour backgrounds (PLAN.md section 11 "True colours") can be light enough — GRAY,

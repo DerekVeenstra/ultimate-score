@@ -89,14 +89,6 @@ class TeamConfigTest {
     }
 
     @Test
-    fun `the two requested US presets exist with their colours`() {
-        val presets = TeamConfig.US_PRESETS
-        assertTrue(presets.contains(TeamConfig("Flaming Nipples", TeamColor.PINK)))
-        assertTrue(presets.contains(TeamConfig("Flaming Throws", TeamColor.GRAY)))
-        assertTrue(presets.contains(TeamConfig.DEFAULT_US))
-    }
-
-    @Test
     fun `no colour means a pure black background, unchanged from before the feature`() {
         assertEquals(0xFF000000, TeamColor.NONE.backgroundArgb)
     }
@@ -142,5 +134,44 @@ class TeamConfigTest {
         // saturation these are light enough that white numerals would be hard to read.
         assertEquals(0xFF000000, textColorArgbFor(TeamColor.GRAY.backgroundArgb))
         assertEquals(0xFF000000, textColorArgbFor(TeamColor.ORANGE.backgroundArgb))
+    }
+
+    @Test
+    fun `a preset converts to a TeamConfig carrying just its name and colour, not its id`() {
+        val preset = TeamPreset(id = "abc123", name = "Sockeye", color = TeamColor.BLUE)
+        assertEquals(TeamConfig("Sockeye", TeamColor.BLUE), preset.toConfig())
+    }
+
+    @Test
+    fun `TeamPresetLists reads and replaces the right side by group`() {
+        val us = TeamPreset("1", "Flaming Nipples", TeamColor.PINK)
+        val them = TeamPreset("2", "Sockeye", TeamColor.BLUE)
+        val lists = TeamPresetLists(myTeams = listOf(us), opponents = listOf(them))
+
+        assertEquals(listOf(us), lists.forGroup(PresetGroup.MY_TEAMS))
+        assertEquals(listOf(them), lists.forGroup(PresetGroup.OPPONENTS))
+
+        val replaced = lists.withGroup(PresetGroup.MY_TEAMS, emptyList())
+        assertEquals(emptyList<TeamPreset>(), replaced.myTeams)
+        // The other group is untouched — the two lists are independent (PLAN.md section 13).
+        assertEquals(listOf(them), replaced.opponents)
+    }
+
+    @Test
+    fun `sanitizeName strips control characters and trims whitespace`() {
+        // Preset names are arbitrary user text, but the preset codec (ScoreRepository's
+        // encodePresets/decodePresets) uses control characters as field/record separators — see
+        // PLAN.md section 13. Stripping them here, once, up front, means the codec never has to
+        // worry about a name colliding with its own framing.
+        assertEquals("Sockeye", sanitizeName("  Sockeye  "))
+        assertEquals("Flaming Nipples", sanitizeName("Flaming Nipples"))
+        assertEquals("", sanitizeName(""))
+        assertEquals("", sanitizeName(null))
+        // Ordinary punctuation a user actually types — commas, colons — is not control text and
+        // must survive untouched.
+        assertEquals("Sockeye, F.C.: The Sequel", sanitizeName("Sockeye, F.C.: The Sequel"))
+        // A literal control character (here, the exact one encodePresets/decodePresets use as a
+        // field separator) must be dropped, not merely tolerated.
+        assertEquals("Sockeye", sanitizeName("Sock\u001Feye"))
     }
 }

@@ -4,9 +4,11 @@ import android.app.Activity
 import android.app.RemoteInput
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,37 +39,162 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.input.RemoteInputIntentHelper
 
-/** Key the opponent-name text comes back under from the Wear text-input activity. */
-private const val OPPONENT_NAME_KEY = "opponent_name"
+/** Key the typed text comes back under from the Wear text-input activity — see [rememberTextInputLauncher]. */
+private const val TEXT_INPUT_KEY = "typed_text"
 
 /**
- * Starting a new game: pick each team's name and colour, then start. Replaces the old plain
- * "New game?" confirm — the score-loss warning is inline here instead, so starting a game is
- * still the same number of taps as before if you don't care about names (see PLAN.md section 11).
+ * The setup flow is three screens modeled as one piece of Compose state within this file, rather
+ * than a second Activity or nav graph (PLAN.md section 13) — small enough on a one-screen-at-a-
+ * time watch app that a nav graph would be pure overhead. [Picking] is the normal two-list view;
+ * tapping "+ New team..." moves to [ChoosingColor] once a name has been typed, and long-pressing
+ * an existing preset moves to [Editing].
+ */
+private sealed interface SetupMode {
+    data object Picking : SetupMode
+    data class ChoosingColor(val group: PresetGroup, val name: String) : SetupMode
+    data class Editing(val group: PresetGroup, val preset: TeamPreset) : SetupMode
+}
+
+/**
+ * Starting a new game: pick each side's saved team (or nothing), then start. Replaces the old
+ * plain "New game?" confirm — the score-loss warning is inline here instead, so starting a game
+ * is still the same number of taps as before if you don't pick anything (PLAN.md sections 11
+ * and 13).
  *
  * Both sides are optional: leave them alone and you get the plain US/THEM, no-colour game the app
- * had before. Pre-populated with the current game's teams, so a recurring team stays selected.
+ * had before either feature existed. There is deliberately no free-typed name on either side any
+ * more (section 13 superseded that "presets for US, free text for the opponent" split from
+ * section 11) — a name now only exists as a saved, reusable [TeamPreset], created inline from the
+ * "+ New team..." row at the end of each list and managed (renamed/recoloured/deleted) by long-
+ * pressing it.
  */
 @Composable
 fun NewGameSetupScreen(
     currentState: GameState,
+    presets: TeamPresetLists,
     onStart: (us: TeamConfig, them: TeamConfig) -> Unit,
     onCancel: () -> Unit,
+    onAddPreset: (group: PresetGroup, name: String, color: TeamColor) -> TeamPreset,
+    onRenamePreset: (group: PresetGroup, id: String, newName: String) -> Unit,
+    onRecolorPreset: (group: PresetGroup, id: String, color: TeamColor) -> Unit,
+    onDeletePreset: (group: PresetGroup, id: String) -> Unit,
 ) {
-    var usTeam by remember { mutableStateOf(currentState.usTeam) }
-    var themTeam by remember { mutableStateOf(currentState.themTeam) }
+    var mode by remember { mutableStateOf<SetupMode>(SetupMode.Picking) }
 
-    val opponentNameLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val typed = RemoteInput.getResultsFromIntent(result.data)
-                ?.getCharSequence(OPPONENT_NAME_KEY)
-                ?.toString()
-            themTeam = TeamConfig.named(typed, themTeam.color, TeamConfig.DEFAULT_THEM)
-        }
+    // Selection is tracked by preset id, not by copying a TeamConfig into local state the way the
+    // pre-preset version did. That old `usTeam.name == preset.name` comparison (see PLAN.md
+    // section 11) couldn't tell two same-named presets apart and broke the moment a preset was
+    // renamed; an id can't. Pre-populated by matching the current game's team against the saved
+    // presets so a recurring team stays selected across setup visits, the same stickiness section
+    // 11 had — but if nothing matches (a fresh install, or a game still in progress from before
+    // this feature existed with a free-typed opponent name that has no corresponding preset),
+    // nothing is selected, which is exactly the "nothing picked" v1 look section 13 requires to
+    // keep working.
+    var usSelectedId by remember {
+        mutableStateOf(presets.myTeams.find { it.toConfig() == currentState.usTeam }?.id)
+    }
+    var themSelectedId by remember {
+        mutableStateOf(presets.opponents.find { it.toConfig() == currentState.themTeam }?.id)
     }
 
+    val usTeam = presets.myTeams.find { it.id == usSelectedId }?.toConfig() ?: TeamConfig.DEFAULT_US
+    val themTeam = presets.opponents.find { it.id == themSelectedId }?.toConfig() ?: TeamConfig.DEFAULT_THEM
+
+    val newMyTeamNameLauncher = rememberTextInputLauncher(label = "Team name") { typed ->
+        val trimmed = typed?.trim()
+        if (!trimmed.isNullOrEmpty()) mode = SetupMode.ChoosingColor(PresetGroup.MY_TEAMS, trimmed)
+    }
+    val newOpponentNameLauncher = rememberTextInputLauncher(label = "Opponent name") { typed ->
+        val trimmed = typed?.trim()
+        if (!trimmed.isNullOrEmpty()) mode = SetupMode.ChoosingColor(PresetGroup.OPPONENTS, trimmed)
+    }
+    // Reused for renaming either side's preset — which one is being renamed is read off `mode`
+    // itself when the result comes back (this is only ever invoked while `mode` is `Editing`), so
+    // one launcher instance covers both, per PLAN.md section 13's "factor the RemoteInput launcher
+    // into one reusable helper" guidance rather than a third near-identical copy.
+    val renameLauncher = rememberTextInputLauncher(label = "Team name") { typed ->
+        val editing = mode as? SetupMode.Editing ?: return@rememberTextInputLauncher
+        val trimmed = typed?.trim()
+        if (!trimmed.isNullOrEmpty()) onRenamePreset(editing.group, editing.preset.id, trimmed)
+    }
+
+    when (val current = mode) {
+        is SetupMode.Picking -> PickingScreen(
+            currentState = currentState,
+            presets = presets,
+            usSelectedId = usSelectedId,
+            themSelectedId = themSelectedId,
+            onSelectUs = { id -> usSelectedId = if (usSelectedId == id) null else id },
+            onSelectThem = { id -> themSelectedId = if (themSelectedId == id) null else id },
+            onLongPress = { group, preset -> mode = SetupMode.Editing(group, preset) },
+            onAddMyTeam = newMyTeamNameLauncher,
+            onAddOpponent = newOpponentNameLauncher,
+            onStart = { onStart(usTeam, themTeam) },
+            onCancel = onCancel,
+        )
+
+        is SetupMode.ChoosingColor -> ChoosingColorScreen(
+            name = current.name,
+            onSave = { color ->
+                val preset = onAddPreset(current.group, current.name, color)
+                when (current.group) {
+                    PresetGroup.MY_TEAMS -> usSelectedId = preset.id
+                    PresetGroup.OPPONENTS -> themSelectedId = preset.id
+                }
+                mode = SetupMode.Picking
+            },
+            onCancel = { mode = SetupMode.Picking },
+        )
+
+        is SetupMode.Editing -> {
+            // Re-read the live preset every recomposition rather than trusting the snapshot
+            // captured when this screen was entered, so a recolour shows up immediately in this
+            // same screen's swatch highlight.
+            val live = presets.forGroup(current.group).find { it.id == current.preset.id }
+            if (live != null) {
+                EditingScreen(
+                    preset = live,
+                    onRename = renameLauncher,
+                    onRecolor = { color -> onRecolorPreset(current.group, live.id, color) },
+                    onDelete = {
+                        onDeletePreset(current.group, live.id)
+                        // The "deleting the selected preset must fall back to the default" rule
+                        // (PLAN.md section 13) lives here rather than in the ViewModel, because
+                        // the selection itself is this screen's Compose state, not shared state.
+                        when (current.group) {
+                            PresetGroup.MY_TEAMS -> if (usSelectedId == live.id) usSelectedId = null
+                            PresetGroup.OPPONENTS -> if (themSelectedId == live.id) themSelectedId = null
+                        }
+                        mode = SetupMode.Picking
+                    },
+                    onDone = { mode = SetupMode.Picking },
+                )
+            } else {
+                // Only reachable if the preset vanished out from under this screen (not possible
+                // on a single-user watch app today, but falling back beats rendering a dangling
+                // reference). LaunchedEffect rather than assigning `mode` directly in the
+                // composable body, which would be a state mutation during composition.
+                LaunchedEffect(Unit) { mode = SetupMode.Picking }
+            }
+        }
+    }
+}
+
+/** The normal two-list view: your team, the opponent, Start/Cancel. */
+@Composable
+private fun PickingScreen(
+    currentState: GameState,
+    presets: TeamPresetLists,
+    usSelectedId: String?,
+    themSelectedId: String?,
+    onSelectUs: (String) -> Unit,
+    onSelectThem: (String) -> Unit,
+    onLongPress: (PresetGroup, TeamPreset) -> Unit,
+    onAddMyTeam: () -> Unit,
+    onAddOpponent: () -> Unit,
+    onStart: () -> Unit,
+    onCancel: () -> Unit,
+) {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -94,49 +222,45 @@ fun NewGameSetupScreen(
 
         item { SectionHeader("Your team") }
 
-        items(TeamConfig.US_PRESETS.size) { index ->
-            val preset = TeamConfig.US_PRESETS[index]
+        items(presets.myTeams.size) { index ->
+            val preset = presets.myTeams[index]
             SelectableRow(
                 label = preset.name,
-                selected = usTeam.name == preset.name,
+                selected = usSelectedId == preset.id,
                 swatch = preset.color,
-                // Picking a preset adopts its colour too; the swatches below can still override.
-                onClick = { usTeam = preset },
+                onClick = { onSelectUs(preset.id) },
+                onLongClick = { onLongPress(PresetGroup.MY_TEAMS, preset) },
             )
         }
 
         item {
-            ColorSwatches(
-                selected = usTeam.color,
-                onSelect = { usTeam = usTeam.copy(color = it) },
+            SelectableRow(
+                label = "+ New team…",
+                selected = false,
+                swatch = null,
+                onClick = onAddMyTeam,
             )
         }
 
         item { SectionHeader("Opponent") }
 
-        item {
+        items(presets.opponents.size) { index ->
+            val preset = presets.opponents[index]
             SelectableRow(
-                label = themTeam.name,
-                selected = false,
-                swatch = null,
-                trailing = "Edit",
-                onClick = {
-                    val intent = RemoteInputIntentHelper.createActionRemoteInputIntent()
-                    val inputs = listOf(
-                        RemoteInput.Builder(OPPONENT_NAME_KEY)
-                            .setLabel("Opponent name")
-                            .build(),
-                    )
-                    RemoteInputIntentHelper.putRemoteInputsExtra(intent, inputs)
-                    opponentNameLauncher.launch(intent)
-                },
+                label = preset.name,
+                selected = themSelectedId == preset.id,
+                swatch = preset.color,
+                onClick = { onSelectThem(preset.id) },
+                onLongClick = { onLongPress(PresetGroup.OPPONENTS, preset) },
             )
         }
 
         item {
-            ColorSwatches(
-                selected = themTeam.color,
-                onSelect = { themTeam = themTeam.copy(color = it) },
+            SelectableRow(
+                label = "+ New team…",
+                selected = false,
+                swatch = null,
+                onClick = onAddOpponent,
             )
         }
 
@@ -148,7 +272,7 @@ fun NewGameSetupScreen(
                     .height(44.dp)
                     .clip(RoundedCornerShape(22.dp))
                     .background(AccentColor)
-                    .clickable { onStart(usTeam, themTeam) },
+                    .clickable(onClick = onStart),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -176,6 +300,162 @@ fun NewGameSetupScreen(
     }
 }
 
+/**
+ * Step two of inline creation (PLAN.md section 13): the name is already typed, now pick a colour
+ * (or leave it [TeamColor.NONE]) and save. Reuses [ColorSwatches] rather than a bespoke picker.
+ */
+@Composable
+private fun ChoosingColorScreen(name: String, onSave: (TeamColor) -> Unit, onCancel: () -> Unit) {
+    var color by remember { mutableStateOf(TeamColor.NONE) }
+
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item {
+            Text(
+                text = "Colour for “$name”",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+        }
+
+        item { ColorSwatches(selected = color, onSelect = { color = it }) }
+
+        item {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(AccentColor)
+                    .clickable { onSave(color) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "Save", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+            }
+        }
+
+        item {
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable(onClick = onCancel),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "Cancel", fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+/**
+ * Reached by long-pressing a saved preset (PLAN.md section 13, decision 4): rename, recolour, or
+ * delete that one preset. Recolouring applies immediately (there's nothing to "save" — the swatch
+ * tap itself is the whole gesture, same as it always was in [ColorSwatches]); renaming goes
+ * through the shared RemoteInput launcher; deleting returns to the picking screen.
+ */
+@Composable
+private fun EditingScreen(
+    preset: TeamPreset,
+    onRename: () -> Unit,
+    onRecolor: (TeamColor) -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+) {
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item {
+            Text(
+                text = "Edit team",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        item {
+            SelectableRow(
+                label = preset.name,
+                selected = false,
+                swatch = preset.color,
+                trailing = "Rename",
+                onClick = onRename,
+            )
+        }
+
+        item { ColorSwatches(selected = preset.color, onSelect = onRecolor) }
+
+        item {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFFB00020))
+                    .clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "Delete", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+        }
+
+        item {
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable(onClick = onDone),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "Done", fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+/**
+ * One reusable wrapper around Wear's standard `RemoteInputIntentHelper` text-entry activity
+ * (keyboard *and* voice dictation) — see PLAN.md section 11. This screen now needs it in three
+ * places (new my-team, new opponent, rename), so the intent-building/result-parsing boilerplate
+ * that used to be duplicated at the single call site section 11 had lives here once instead of
+ * being copy-pasted twice more (PLAN.md section 13). [onResult] gets `null` for a cancelled or
+ * otherwise non-OK result — every call site here treats that the same as an empty typed string:
+ * "nothing usable came back, so do nothing."
+ */
+@Composable
+private fun rememberTextInputLauncher(label: String, onResult: (String?) -> Unit): () -> Unit {
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val typed = if (result.resultCode == Activity.RESULT_OK) {
+            RemoteInput.getResultsFromIntent(result.data)?.getCharSequence(TEXT_INPUT_KEY)?.toString()
+        } else {
+            null
+        }
+        onResult(typed)
+    }
+    return {
+        val intent = RemoteInputIntentHelper.createActionRemoteInputIntent()
+        val inputs = listOf(RemoteInput.Builder(TEXT_INPUT_KEY).setLabel(label).build())
+        RemoteInputIntentHelper.putRemoteInputsExtra(intent, inputs)
+        launcher.launch(intent)
+    }
+}
+
 @Composable
 private fun SectionHeader(text: String) {
     Text(
@@ -187,13 +467,22 @@ private fun SectionHeader(text: String) {
     )
 }
 
-/** One tappable row: a name, an optional colour dot, and an optional trailing hint. */
+/**
+ * One tappable row: a name, an optional colour dot, and an optional trailing hint. Tap always
+ * fires [onClick]; when [onLongClick] is supplied the row also responds to a long press (PLAN.md
+ * section 13, decision 4) — the two need different Modifier chains ([combinedClickable] only
+ * makes sense once there's a second gesture to combine with), so which one is used depends on
+ * whether a preset row (rename/recolour/delete via long-press) or a plain action row (the
+ * "+ New team..." row, which has nothing to long-press into) is being drawn.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SelectableRow(
     label: String,
     selected: Boolean,
     swatch: TeamColor?,
     trailing: String? = null,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Box(
@@ -209,7 +498,13 @@ private fun SelectableRow(
                 if (selected) Modifier.border(1.5.dp, AccentColor, RoundedCornerShape(20.dp))
                 else Modifier,
             )
-            .clickable(onClick = onClick)
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -219,12 +514,16 @@ private fun SelectableRow(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (swatch != null && swatch != TeamColor.NONE) {
+                if (swatch != null) {
+                    // A thin outline regardless of the swatch's own colour -- NONE's near-black
+                    // dot (see TeamColor's doc) would otherwise nearly disappear against this
+                    // row's own dark background, especially once selected (PLAN.md section 18).
                     Box(
                         modifier = Modifier
                             .size(12.dp)
                             .clip(CircleShape)
-                            .background(Color(swatch.swatchArgb)),
+                            .background(Color(swatch.swatchArgb))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.35f), CircleShape),
                     )
                 }
                 Text(
@@ -232,9 +531,7 @@ private fun SelectableRow(
                     fontSize = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(
-                        start = if (swatch != null && swatch != TeamColor.NONE) 8.dp else 0.dp,
-                    ),
+                    modifier = Modifier.padding(start = if (swatch != null) 8.dp else 0.dp),
                 )
             }
             if (trailing != null) {
@@ -277,7 +574,14 @@ private fun ColorSwatches(selected: TeamColor, onSelect: (TeamColor) -> Unit) {
                                         if (color == selected) {
                                             Modifier.border(2.dp, Color.White, CircleShape)
                                         } else {
-                                            Modifier
+                                            // NONE's near-black swatch would otherwise all but
+                                            // vanish against this screen's own black background
+                                            // when it isn't the selected one (PLAN.md section 18).
+                                            Modifier.border(
+                                                0.5.dp,
+                                                Color.White.copy(alpha = 0.35f),
+                                                CircleShape,
+                                            )
                                         },
                                     ),
                             )
