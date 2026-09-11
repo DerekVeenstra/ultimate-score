@@ -30,6 +30,17 @@ interface TeamPresetStore {
     suspend fun savePresets(group: PresetGroup, presets: List<TeamPreset>)
 }
 
+/**
+ * Where [ScoreViewModel] loads and persists the score-history list of completed games (the
+ * "Done" feature). Its own interface for the same reason [TeamPresetStore] is separate from
+ * [ScoreHistoryStore]: archiving or deleting one saved game never needs to touch the running
+ * game's history or the preset lists.
+ */
+interface SavedGameStore {
+    suspend fun loadSavedGames(): List<SavedGame>
+    suspend fun saveSavedGames(games: List<SavedGame>)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Pure codecs. Top-level and free of Android imports specifically so the serialization round-trip
 // — including how already-saved games from before team colours existed are read back — is
@@ -77,39 +88,84 @@ internal fun decodeTeam(name: String?, color: String?, fallback: TeamConfig): Te
     TeamConfig.named(name = name, color = decodeColor(color), fallback = fallback)
 
 /**
- * Field/record separators for [encodePresets]/[decodePresets]. Preset names are arbitrary user
- * text and *will* contain commas and colons — the punctuation the history/team codecs above use
- * as separators — so reusing those would require an escaping scheme (and its bugs). ASCII control
- * characters that can never appear in a name are used instead: [sanitizeName] strips
- * every control character from a name before it's ever stored, so these two can never collide
- * with real content, and no escaping is needed at all.
+ * Field/record separators for [encodePresets]/[decodePresets] and [encodeSavedGames]/
+ * [decodeSavedGames]. Preset and team names are arbitrary user text and *will* contain commas and
+ * colons — the punctuation the history/team codecs above use as separators — so reusing those
+ * would require an escaping scheme (and its bugs). ASCII control characters that can never appear
+ * in a name are used instead: [sanitizeName] strips every control character from a name before
+ * it's ever stored, so these two can never collide with real content, and no escaping is needed
+ * at all.
  */
-private const val PRESET_FIELD_SEPARATOR = "\u001F" // Unit Separator
-private const val PRESET_RECORD_SEPARATOR = "\u001E" // Record Separator
+private const val FIELD_SEPARATOR = "\u001F" // Unit Separator
+private const val RECORD_SEPARATOR = "\u001E" // Record Separator
 
 /**
  * One preset per record (`id`[US]`name`[US]`color`), records joined by RS — see
- * [PRESET_FIELD_SEPARATOR]/[PRESET_RECORD_SEPARATOR]. A watch-local list of teams is at most a
+ * [FIELD_SEPARATOR]/[RECORD_SEPARATOR]. A watch-local list of teams is at most a
  * handful of entries, so, same reasoning as [encodeHistory], cost is irrelevant.
  */
 internal fun encodePresets(presets: List<TeamPreset>): String =
-    presets.joinToString(separator = PRESET_RECORD_SEPARATOR) { preset ->
-        listOf(preset.id, preset.name, preset.color.name).joinToString(PRESET_FIELD_SEPARATOR)
+    presets.joinToString(separator = RECORD_SEPARATOR) { preset ->
+        listOf(preset.id, preset.name, preset.color.name).joinToString(FIELD_SEPARATOR)
     }
 
 internal fun decodePresets(raw: String?): List<TeamPreset> {
     if (raw.isNullOrBlank()) return emptyList()
-    return raw.split(PRESET_RECORD_SEPARATOR).mapNotNull(::decodeTeamPreset)
+    return raw.split(RECORD_SEPARATOR).mapNotNull(::decodeTeamPreset)
 }
 
 /** Malformed entries (wrong field count, blank id/name) are dropped rather than crashing. */
 private fun decodeTeamPreset(entry: String): TeamPreset? {
-    val parts = entry.split(PRESET_FIELD_SEPARATOR)
+    val parts = entry.split(FIELD_SEPARATOR)
     if (parts.size != 3) return null
     val id = parts[0]
     val name = parts[1]
     if (id.isBlank() || name.isBlank()) return null
     return TeamPreset(id = id, name = name, color = decodeColor(parts[2]))
+}
+
+/**
+ * One saved game per record (id / us name / us colour / them name / them colour / us score /
+ * them score / completed-at millis), records joined by RS — same separators and reasoning as
+ * [encodePresets]. Score history is at most a few dozen entries for a tournament day, so, same
+ * reasoning as [encodeHistory], cost is irrelevant.
+ */
+internal fun encodeSavedGames(games: List<SavedGame>): String =
+    games.joinToString(separator = RECORD_SEPARATOR) { game ->
+        listOf(
+            game.id,
+            game.usTeam.name,
+            game.usTeam.color.name,
+            game.themTeam.name,
+            game.themTeam.color.name,
+            game.usScore.toString(),
+            game.themScore.toString(),
+            game.completedAtMillis.toString(),
+        ).joinToString(FIELD_SEPARATOR)
+    }
+
+internal fun decodeSavedGames(raw: String?): List<SavedGame> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return raw.split(RECORD_SEPARATOR).mapNotNull(::decodeSavedGame)
+}
+
+/** Malformed entries (wrong field count, blank id, non-numeric score/timestamp) are dropped. */
+private fun decodeSavedGame(entry: String): SavedGame? {
+    val parts = entry.split(FIELD_SEPARATOR)
+    if (parts.size != 8) return null
+    val id = parts[0]
+    if (id.isBlank()) return null
+    val usScore = parts[5].toIntOrNull() ?: return null
+    val themScore = parts[6].toIntOrNull() ?: return null
+    val completedAtMillis = parts[7].toLongOrNull() ?: return null
+    return SavedGame(
+        id = id,
+        usTeam = decodeTeam(parts[1], parts[2], TeamConfig.DEFAULT_US),
+        themTeam = decodeTeam(parts[3], parts[4], TeamConfig.DEFAULT_THEM),
+        usScore = usScore,
+        themScore = themScore,
+        completedAtMillis = completedAtMillis,
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -123,6 +179,7 @@ private val THEM_COLOR_KEY = stringPreferencesKey("them_color")
 private val ABBA_START_KEY = stringPreferencesKey("abba_start")
 private val MY_TEAM_PRESETS_KEY = stringPreferencesKey("my_team_presets")
 private val OPPONENT_PRESETS_KEY = stringPreferencesKey("opponent_team_presets")
+private val SAVED_GAMES_KEY = stringPreferencesKey("saved_games")
 private val Context.gameDataStore: DataStore<Preferences> by preferencesDataStore(name = DATASTORE_NAME)
 
 private fun presetsKeyFor(group: PresetGroup) = when (group) {
@@ -131,13 +188,16 @@ private fun presetsKeyFor(group: PresetGroup) = when (group) {
 }
 
 /**
- * Persists the game (the score's event log plus both teams' names and colours) and the two
- * preset lists to disk via Jetpack DataStore, so a crash, force-stop, or battery pull never loses
- * the game in progress or a saved team. Both stores share the same `game_state` preferences file
- * — there's no reason to split it, and this keeps everything watch-local in one place. See
- * PLAN.md section 4 "Persistence", section 6 Phase 4, and section 13 (presets).
+ * Persists the game (the score's event log plus both teams' names and colours), the two preset
+ * lists, and the score-history list of completed games to disk via Jetpack DataStore, so a crash,
+ * force-stop, or battery pull never loses the game in progress, a saved team, or a finished game's
+ * result. All three share the same `game_state` preferences file — there's no reason to split it,
+ * and this keeps everything watch-local in one place. See PLAN.md section 4 "Persistence",
+ * section 6 Phase 4, section 13 (presets), and the "Done" score-history section.
  */
-class DataStoreScoreRepository(private val context: Context) : ScoreHistoryStore, TeamPresetStore {
+class DataStoreScoreRepository(
+    private val context: Context,
+) : ScoreHistoryStore, TeamPresetStore, SavedGameStore {
 
     override suspend fun load(): GameState {
         val prefs = context.gameDataStore.data.first()
@@ -173,6 +233,17 @@ class DataStoreScoreRepository(private val context: Context) : ScoreHistoryStore
     override suspend fun savePresets(group: PresetGroup, presets: List<TeamPreset>) {
         context.gameDataStore.edit { prefs ->
             prefs[presetsKeyFor(group)] = encodePresets(presets)
+        }
+    }
+
+    override suspend fun loadSavedGames(): List<SavedGame> {
+        val prefs = context.gameDataStore.data.first()
+        return decodeSavedGames(prefs[SAVED_GAMES_KEY])
+    }
+
+    override suspend fun saveSavedGames(games: List<SavedGame>) {
+        context.gameDataStore.edit { prefs ->
+            prefs[SAVED_GAMES_KEY] = encodeSavedGames(games)
         }
     }
 }

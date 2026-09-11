@@ -170,4 +170,92 @@ class ScorePersistenceCodecTest {
         val raw = "1\u001FSockeye\u001FCHARTREUSE"
         assertEquals(listOf(TeamPreset("1", "Sockeye", TeamColor.NONE)), decodePresets(raw))
     }
+
+    // -----------------------------------------------------------------------------------------
+    // Saved-game codec (the "Done" score-history feature). Same field/record separators and same
+    // reasoning as the preset codec above -- team names in a saved game go through the same
+    // sanitizeName() path a preset's does, so they can never contain the separator characters.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `a single saved game survives an encode-decode round trip`() {
+        val game = SavedGame(
+            id = "1699000000000",
+            usTeam = TeamConfig("Flaming Nipples", TeamColor.PINK),
+            themTeam = TeamConfig("Sockeye", TeamColor.BLUE),
+            usScore = 12,
+            themScore = 9,
+            completedAtMillis = 1_699_000_300_000,
+        )
+        assertEquals(listOf(game), decodeSavedGames(encodeSavedGames(listOf(game))))
+    }
+
+    @Test
+    fun `multiple saved games survive an encode-decode round trip in order`() {
+        val games = listOf(
+            SavedGame("1", TeamConfig.DEFAULT_US, TeamConfig.DEFAULT_THEM, 12, 9, 1000),
+            SavedGame("2", TeamConfig("Flaming Throws", TeamColor.GRAY), TeamConfig("Sockeye", TeamColor.BLUE), 8, 15, 2000),
+        )
+        assertEquals(games, decodeSavedGames(encodeSavedGames(games)))
+    }
+
+    @Test
+    fun `an empty saved-game list round trips to empty`() {
+        assertEquals(emptyList<SavedGame>(), decodeSavedGames(encodeSavedGames(emptyList())))
+    }
+
+    @Test
+    fun `absent or blank stored saved games decode to an empty list, not a crash`() {
+        assertEquals(emptyList<SavedGame>(), decodeSavedGames(null))
+        assertEquals(emptyList<SavedGame>(), decodeSavedGames(""))
+        assertEquals(emptyList<SavedGame>(), decodeSavedGames("   "))
+    }
+
+    @Test
+    fun `team names containing commas and colons round trip exactly in a saved game`() {
+        val game = SavedGame(
+            id = "1",
+            usTeam = TeamConfig("Sockeye, F.C.: The Sequel", TeamColor.BLUE),
+            themTeam = TeamConfig.DEFAULT_THEM,
+            usScore = 3,
+            themScore = 1,
+            completedAtMillis = 5000,
+        )
+        assertEquals(listOf(game), decodeSavedGames(encodeSavedGames(listOf(game))))
+    }
+
+    @Test
+    fun `malformed saved-game records are dropped rather than crashing the app`() {
+        val valid = SavedGame("2", TeamConfig.DEFAULT_US, TeamConfig("Sockeye", TeamColor.BLUE), 5, 4, 9000)
+        val raw = listOf(
+            "1\u001FUS\u001FNONE\u001FTHEM\u001FNONE\u001Fnotanumber\u001F4\u001F9000", // bad us score
+            "\u001FUS\u001FNONE\u001FTHEM\u001FNONE\u001F5\u001F4\u001F9000", // blank id
+            "onlyonefield", // wrong field count
+            listOf(
+                valid.id,
+                valid.usTeam.name,
+                valid.usTeam.color.name,
+                valid.themTeam.name,
+                valid.themTeam.color.name,
+                valid.usScore.toString(),
+                valid.themScore.toString(),
+                valid.completedAtMillis.toString(),
+            ).joinToString("\u001F"),
+        ).joinToString("\u001E")
+
+        assertEquals(listOf(valid), decodeSavedGames(raw))
+    }
+
+    @Test
+    fun `a saved game with an unknown colour name falls back to NONE rather than dropping it`() {
+        val raw = "1\u001FSockeye\u001FCHARTREUSE\u001FTHEM\u001FNONE\u001F5\u001F4\u001F9000"
+        val decoded = decodeSavedGames(raw).single()
+        assertEquals(TeamColor.NONE, decoded.usTeam.color)
+    }
+
+    @Test
+    fun `a saved game round trips its final score exactly, including a 0-0 result`() {
+        val game = SavedGame("1", TeamConfig.DEFAULT_US, TeamConfig.DEFAULT_THEM, 0, 0, 1000)
+        assertEquals(listOf(game), decodeSavedGames(encodeSavedGames(listOf(game))))
+    }
 }

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,10 +75,15 @@ private fun rememberScoreViewModel(): ScoreViewModel {
     return viewModel(
         factory = viewModelFactory {
             initializer {
-                // One DataStoreScoreRepository instance implements both stores (PLAN.md section
-                // 13) — same underlying `game_state` preferences file, just different keys.
+                // One DataStoreScoreRepository instance implements all three stores (PLAN.md
+                // section 13, and the "Done" score-history feature) — same underlying
+                // `game_state` preferences file, just different keys.
                 val repository = DataStoreScoreRepository(appContext)
-                ScoreViewModel(historyStore = repository, presetStore = repository)
+                ScoreViewModel(
+                    historyStore = repository,
+                    presetStore = repository,
+                    savedGameStore = repository,
+                )
             }
         },
     )
@@ -112,30 +118,55 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
             else -> {
                 val state by viewModel.state.collectAsState()
                 var showNewGameSetup by remember { mutableStateOf(false) }
+                var showEndGameConfirm by remember { mutableStateOf(false) }
 
                 MaterialTheme {
-                    if (showNewGameSetup) {
-                        val presets by viewModel.presets.collectAsState()
-                        NewGameSetupScreen(
-                            currentState = state,
-                            presets = presets,
-                            onStart = { us, them, abbaStart ->
-                                viewModel.newGame(us, them, abbaStart)
-                                showNewGameSetup = false
-                            },
-                            onCancel = { showNewGameSetup = false },
-                            onAddPreset = viewModel::addPreset,
-                            onRenamePreset = viewModel::renamePreset,
-                            onRecolorPreset = viewModel::recolorPreset,
-                            onDeletePreset = viewModel::deletePreset,
-                        )
-                    } else {
-                        ScoreScreen(
-                            state = state,
-                            onScore = viewModel::score,
-                            onUndo = viewModel::undo,
-                            onRequestNewGame = { showNewGameSetup = true },
-                        )
+                    when {
+                        showNewGameSetup -> {
+                            val presets by viewModel.presets.collectAsState()
+                            val savedGames by viewModel.savedGames.collectAsState()
+                            NewGameSetupScreen(
+                                currentState = state,
+                                presets = presets,
+                                savedGames = savedGames,
+                                onStart = { us, them, abbaStart ->
+                                    viewModel.newGame(us, them, abbaStart)
+                                    showNewGameSetup = false
+                                },
+                                onCancel = { showNewGameSetup = false },
+                                onAddPreset = viewModel::addPreset,
+                                onRenamePreset = viewModel::renamePreset,
+                                onRecolorPreset = viewModel::recolorPreset,
+                                onDeletePreset = viewModel::deletePreset,
+                                onDeleteSavedGame = viewModel::deleteSavedGame,
+                            )
+                        }
+
+                        showEndGameConfirm -> {
+                            EndGameConfirmScreen(
+                                state = state,
+                                onConfirm = {
+                                    viewModel.completeGame()
+                                    showEndGameConfirm = false
+                                    // "Confirming Done brings the user back to the new game
+                                    // screen" — the just-finished teams stay pre-selected there
+                                    // via the same stickiness matching a recurring matchup
+                                    // already relies on (see ScoreViewModel.completeGame).
+                                    showNewGameSetup = true
+                                },
+                                onCancel = { showEndGameConfirm = false },
+                            )
+                        }
+
+                        else -> {
+                            ScoreScreen(
+                                state = state,
+                                onScore = viewModel::score,
+                                onUndo = viewModel::undo,
+                                onRequestNewGame = { showNewGameSetup = true },
+                                onRequestEndGame = { showEndGameConfirm = true },
+                            )
+                        }
                     }
                 }
             }
@@ -149,6 +180,7 @@ fun ScoreScreen(
     onScore: (Team) -> Unit,
     onUndo: () -> Unit,
     onRequestNewGame: () -> Unit,
+    onRequestEndGame: () -> Unit,
 ) {
     // Sizes below were tuned by eye on a 454px/320dpi round screen (227dp tall). A 360px
     // square AVD at the SAME density is only 180dp tall — 21% less room — and hardcoding those
@@ -267,6 +299,18 @@ fun ScoreScreen(
                     .padding(start = 10.dp),
             )
         }
+
+        // "Done" — marks the game over. Mirrors the gender badge's position on the divider's
+        // opposite edge. Unlike the badge, this needs its own tap target: `clickable` requires an
+        // unconsumed down event the same way UndoControl's overlay does, so a hold that starts
+        // here is captured here rather than falling through to the HoldToScoreZone underneath.
+        DoneButton(
+            onClick = onRequestEndGame,
+            fontSize = (13 * heightRatio).coerceAtLeast(10f).sp,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 10.dp),
+        )
     }
 }
 
@@ -290,6 +334,90 @@ private fun GenderBadge(gender: Gender, fontSize: TextUnit, modifier: Modifier =
             fontWeight = FontWeight.Bold,
             color = Color.Black,
         )
+    }
+}
+
+/**
+ * Marks the game over. Tapping this alone does *not* end the game — it opens
+ * [EndGameConfirmScreen], so a stray tap here can't lose the score; see PLAN.md's "Done" feature.
+ * Styled in the accent colour (unlike the merely-informational [GenderBadge]) since this is an
+ * action, not a status indicator.
+ */
+@Composable
+private fun DoneButton(onClick: () -> Unit, fontSize: TextUnit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(AccentColor)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Done",
+            fontSize = fontSize,
+            fontWeight = FontWeight.Bold,
+            color = Color.Black,
+        )
+    }
+}
+
+/**
+ * Reached by tapping [DoneButton] — the "validate the press was intentional" step (PLAN.md's
+ * "Done" feature). Shows the final score so ending the wrong game is caught before it's archived;
+ * confirming calls back into [ScoreViewModel.completeGame] (via WearApp) and cancelling returns
+ * to the score card unchanged. Mirrors the button styling of NewGameSetupScreen's own confirm
+ * screens (accent "primary action" pill, plain "Cancel" pill below it).
+ */
+@Composable
+private fun EndGameConfirmScreen(state: GameState, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "End game?",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = "${state.usTeam.name.uppercase()} ${state.us} – ${state.them} " +
+                    state.themTeam.name.uppercase(),
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                color = Color.White.copy(alpha = 0.8f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 6.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .padding(top = 16.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(AccentColor)
+                    .clickable(onClick = onConfirm),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "End Game", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+            }
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth(0.85f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable(onClick = onCancel),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "Cancel", fontSize = 14.sp)
+            }
+        }
     }
 }
 

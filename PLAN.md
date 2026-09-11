@@ -1,7 +1,7 @@
 # Ultimate Frisbee Score Keeper — Wear OS App
 
 **Status:** v1 complete (all 7 phases) + team names/colours with true-colour backgrounds (sections 11-12, verified on a real TicWatch Pro 5 Enduro) + saved team presets on both sides (section 13, unit-tested; not yet verified on-device)
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-11
 **Target device:** TicWatch (primary), any Wear OS 3+ smartwatch (secondary)
 **Repo:** https://github.com/DerekVeenstra/ultimate-score
 
@@ -1016,3 +1016,132 @@ absent/unknown/blank — same forgiving shape as `decodeColor`.
 current-point tracking through score/undo, gender codec round-trip, persistence load/save),
 build green. Not yet installed on the real TicWatch — on-device check of the setup control and
 the divider badge still pending.
+
+---
+
+## 20. Post-v1: "Done" — ending a game and score history (2026-09-11)
+
+Derek asked for a "Done" control on the score card to mark a game over, with a step that
+validates the press was intentional before it takes effect, and a "Score history" section on the
+new-game screen where completed games are stored.
+
+### Decisions (asked up front, all three answered as recommended)
+
+| Decision | Choice | Why |
+|---|---|---|
+| Validation | Full-screen confirm — tap Done → a screen shows the final score with End Game/Cancel | Mirrors the app's existing confirm-screen pattern (the old new-game confirm, still used by team-preset/saved-game delete flows) rather than a novel gesture. |
+| History detail | Plain list — no per-game detail screen | Matches the app's minimal, one-screen-at-a-time philosophy; nothing needs the full point log a saved game deliberately doesn't keep. |
+| History management | Long-press a row to delete, no cap on how many are kept | Same gesture the app already uses for managing team presets (which itself is long-press → a confirm step, not an instant delete — see below); storage cost is trivial, same reasoning as every other codec in this file. |
+
+### What "Done" does
+
+`ScoreViewModel.completeGame()`: archives the game in progress — both teams' identities and the
+final score, at whatever point it stood (even 0-0, if that's genuinely how it ended) — as a new
+[`SavedGame`](#savedgame-model), then clears the live game's history. The teams and ABBA choice
+are *kept*, not reset to the plain defaults: the next screen the UI shows is the new-game setup
+screen, which already pre-selects a team by matching it against the current game (section 13's
+stickiness for a recurring matchup) — reusing `GameAction.NewGame(current.usTeam, current.themTeam,
+current.abbaStart)` for the reset gets that pre-selection for free, so no new reducer branch was
+needed. "Confirming Done brings the user back to the new game screen" (as asked) is wired in
+WearApp: the confirm screen's `onConfirm` calls `completeGame()` then flips straight to
+`showNewGameSetup`.
+
+### `SavedGame` model
+
+New file, `SavedGame.kt`: `id` / `usTeam` / `themTeam` / `usScore` / `themScore` /
+`completedAtMillis`. Deliberately *not* the full `ScoreEvent` log — the history section is a plain
+list with no detail view (the "history detail" decision above), so nothing today would use a
+fuller record, unlike the live game's history which the event log itself already is. `id` is
+generated the same way `TeamPreset.id` is (an injectable generator, defaulting to wall-clock
+millis) so tests can supply a deterministic sequence and so deleting one saved game can never be
+confused with another.
+
+Also in this file: `formatSavedGameTimestamp(millis, zone)` — a pure function (java.time, no
+Android import) rendering e.g. "Sep 10, 3:40 PM" for a history row, `zone` defaulting to the real
+device zone but overridable so it stays deterministic in JVM tests.
+
+### Persistence
+
+`SavedGameStore` (new interface, same shape as `TeamPresetStore`) — `loadSavedGames()`/
+`saveSavedGames(games)`. `DataStoreScoreRepository` now implements all three store interfaces
+against the same `game_state` preferences file, one new key (`saved_games`). The codec
+(`encodeSavedGames`/`decodeSavedGames`, ScoreRepository.kt) reuses the preset codec's control-
+character field/record separators (renamed from `PRESET_FIELD_SEPARATOR`/`PRESET_RECORD_SEPARATOR`
+to plain `FIELD_SEPARATOR`/`RECORD_SEPARATOR` now that two codecs share them) — team names in a
+saved game go through the same `sanitizeName()` a preset's does, so the same "can never contain the
+separator" guarantee applies. Malformed records (wrong field count, blank id, non-numeric
+score/timestamp) are dropped, same policy as every other codec in this file.
+
+### UI
+
+- **`DoneButton`** (ScoreScreen.kt): a small accent-coloured pill at `Alignment.CenterEnd` on the
+  divider — the mirror position of the existing ABBA `GenderBadge` at `CenterStart`. Unlike the
+  badge (informational, no gesture handler, a hold falls through to the zone underneath), this
+  needs its own `clickable` — it's an action, and `clickable`'s tap detector wins the same way
+  `UndoControl`'s overlay already does, so a hold starting on it doesn't leak through as a score.
+- **`EndGameConfirmScreen`** (ScoreScreen.kt): the "validate the press was intentional" step —
+  shows the final score with both team names, End Game (accent pill) / Cancel (plain pill),
+  styled like the setup screen's own confirm screens.
+- **Score history section** (`NewGameSetupScreen.kt`, `PickingScreen`): placed *after*
+  Start/Cancel rather than above them, so picking teams and starting a quick game — the common
+  path — stays exactly as many scrolls away as it already was. Empty state is a plain "No saved
+  games yet." Rows (`SavedGameRow`) show the matchup, final score, and `formatSavedGameTimestamp`;
+  sorted newest-first at the display site rather than in storage.
+- **Deleting a saved game**: long-pressing a row moves `NewGameSetupScreen`'s existing `SetupMode`
+  sealed state to a new `ConfirmingDeleteSavedGame` case, rendering `ConfirmDeleteSavedGameScreen`
+  (destructive-red Delete / Cancel, styled like the team-preset `EditingScreen`'s own Delete
+  button) — a confirm step, not an instant delete on the long-press itself, matching how deleting
+  a team preset already works and because history has nothing else to undo it with, unlike a
+  point.
+
+### A real bug found via on-device testing, not just reasoned about: saved games weren't persisting at all
+
+Playing through the feature on the emulator — complete a game, force-stop, relaunch, check score
+history — the just-completed game was gone after the restart. Root cause, found by reading the
+actual wiring rather than guessing: `rememberScoreViewModel()` (ScoreScreen.kt), the factory that
+builds the real production `ScoreViewModel`, constructed it with `historyStore` and `presetStore`
+but never passed the new `savedGameStore` parameter — so every `completeGame()`/`deleteSavedGame()`
+call updated the in-memory `savedGames` StateFlow correctly (which is why it looked fine right up
+until a restart) but the `SavedGameStore?.saveSavedGames(...)` call was silently a no-op against a
+`null` store, and nothing ever reached disk. One-line fix: pass `savedGameStore = repository` too.
+Re-verified with a clean install (`pm clear`), two full play-through-and-Done cycles, a confirmed
+process kill (`pidof` before and after `am force-stop`), and a relaunch — both games' correct
+scores and timestamps present, newest first.
+
+While investigating this, also hardened `updateSavedGames`/`updatePresets` against a related but
+separate *theoretical* race that was not what actually caused the bug above (the real cause was
+the missing wiring, confirmed by reading the code — this is an additional, independently-reasoned
+fix, not a re-diagnosis): unlike the live game (`ScoreScreen` doesn't render, so `score()`/`undo()`
+aren't reachable, until `ScoreViewModel.isReady` flips true), nothing gates preset/saved-game
+interaction on their own DataStore read finishing. A mutation landing before that read completes
+would compute its update from the in-memory default-empty state and then persist that shrunk
+result, discarding whatever was already on disk. Fixed by tracking each store's initial load as a
+`Job` and having `updatePresets`/`updateSavedGames` `join()` it before reading `_presets`/
+`_savedGames` — a no-op in the overwhelmingly common case (the load has almost always long finished
+by the time a person does anything), but closes the gap for good.
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest :app:assembleDebug` — 88/88 tests green (16 new: 8 saved-game
+codec cases in `ScorePersistenceCodecTest` — round trip, empty/blank/malformed input, unknown
+colour fallback, a 0-0 result, names containing commas/colons — and 8 in the new
+`ScoreViewModelSavedGameTest`, mirroring `ScoreViewModelPresetTest`'s style: archiving captures the
+right score/teams/timestamp, completing clears history but keeps teams/ABBA, a 0-0 game still
+archives, delete removes the right one and persists the shrunk list, delete of an unknown id is a
+no-op, id generation uses the injected generator). Build green.
+
+On the emulator: Done → confirm (shows the real live score) → Cancel returns unchanged; Done →
+confirm → End Game lands on the new-game screen with no "score will be lost" warning (history was
+already archived) and the just-finished teams pre-selected; the score-history section renders
+empty state, then rows after completing games, newest first; long-press a row → delete-confirm →
+Cancel keeps it, Delete removes it; the persistence bug above was found and re-verified fixed via
+a clean install, two completed games, a confirmed process kill, and a relaunch showing both.
+
+On the real TicWatch Pro 5 Enduro: installed over Derek's actual in-progress game (colour presets
+"Flaming Throws" vs "Stallbus", ABBA on) — the Done button renders correctly at the divider's
+right edge without colliding with the gender badge on the left or the team colour background, and
+the confirm screen renders both team names correctly (wrapping to two lines) against real AMOLED.
+Deliberately **not** further verified on the real watch beyond this — completing or deleting
+anything would have destroyed Derek's actual real game/history data rather than test data, which
+wasn't this session's call to make. Score history section and a full Done→confirm→setup round
+trip on real hardware are still open for Derek (or a future session) to check.
