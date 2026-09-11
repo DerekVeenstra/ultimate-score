@@ -119,16 +119,31 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
                 val state by viewModel.state.collectAsState()
                 var showNewGameSetup by remember { mutableStateOf(false) }
                 var showEndGameConfirm by remember { mutableStateOf(false) }
+                var showScoreHistory by remember { mutableStateOf(false) }
 
                 MaterialTheme {
                     when {
+                        // Checked first (rather than nested inside the showNewGameSetup branch)
+                        // so it can overlay the setup screen without needing a navigation stack:
+                        // showNewGameSetup simply stays true underneath the whole time, so turning
+                        // showScoreHistory back off (via ScoreHistoryScreen's Back button) falls
+                        // straight back to NewGameSetupScreen exactly where setup was left.
+                        showScoreHistory -> {
+                            val savedGames by viewModel.savedGames.collectAsState()
+                            ScoreHistoryScreen(
+                                savedGames = savedGames,
+                                onDeleteSavedGame = viewModel::deleteSavedGame,
+                                onBack = { showScoreHistory = false },
+                            )
+                        }
+
                         showNewGameSetup -> {
                             val presets by viewModel.presets.collectAsState()
                             val savedGames by viewModel.savedGames.collectAsState()
                             NewGameSetupScreen(
                                 currentState = state,
                                 presets = presets,
-                                savedGames = savedGames,
+                                savedGamesCount = savedGames.size,
                                 onStart = { us, them, abbaStart ->
                                     viewModel.newGame(us, them, abbaStart)
                                     showNewGameSetup = false
@@ -138,7 +153,7 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
                                 onRenamePreset = viewModel::renamePreset,
                                 onRecolorPreset = viewModel::recolorPreset,
                                 onDeletePreset = viewModel::deletePreset,
-                                onDeleteSavedGame = viewModel::deleteSavedGame,
+                                onViewHistory = { showScoreHistory = true },
                             )
                         }
 

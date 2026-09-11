@@ -53,7 +53,6 @@ private sealed interface SetupMode {
     data object Picking : SetupMode
     data class ChoosingColor(val group: PresetGroup, val name: String) : SetupMode
     data class Editing(val group: PresetGroup, val preset: TeamPreset) : SetupMode
-    data class ConfirmingDeleteSavedGame(val game: SavedGame) : SetupMode
 }
 
 /**
@@ -73,14 +72,15 @@ private sealed interface SetupMode {
 fun NewGameSetupScreen(
     currentState: GameState,
     presets: TeamPresetLists,
-    savedGames: List<SavedGame>,
+    /** Just the count, not the list — this screen only needs it for the "Score history" nav row. */
+    savedGamesCount: Int,
     onStart: (us: TeamConfig, them: TeamConfig, abbaStart: Gender?) -> Unit,
     onCancel: () -> Unit,
     onAddPreset: (group: PresetGroup, name: String, color: TeamColor) -> TeamPreset,
     onRenamePreset: (group: PresetGroup, id: String, newName: String) -> Unit,
     onRecolorPreset: (group: PresetGroup, id: String, color: TeamColor) -> Unit,
     onDeletePreset: (group: PresetGroup, id: String) -> Unit,
-    onDeleteSavedGame: (id: String) -> Unit,
+    onViewHistory: () -> Unit,
 ) {
     var mode by remember { mutableStateOf<SetupMode>(SetupMode.Picking) }
 
@@ -129,19 +129,19 @@ fun NewGameSetupScreen(
         is SetupMode.Picking -> PickingScreen(
             currentState = currentState,
             presets = presets,
-            savedGames = savedGames,
+            savedGamesCount = savedGamesCount,
             usSelectedId = usSelectedId,
             themSelectedId = themSelectedId,
             onSelectUs = { id -> usSelectedId = if (usSelectedId == id) null else id },
             onSelectThem = { id -> themSelectedId = if (themSelectedId == id) null else id },
             onLongPress = { group, preset -> mode = SetupMode.Editing(group, preset) },
-            onLongPressSavedGame = { game -> mode = SetupMode.ConfirmingDeleteSavedGame(game) },
             onAddMyTeam = newMyTeamNameLauncher,
             onAddOpponent = newOpponentNameLauncher,
             abbaStart = abbaStart,
             onAbbaStartChange = { abbaStart = it },
             onStart = { onStart(usTeam, themTeam, abbaStart) },
             onCancel = onCancel,
+            onViewHistory = onViewHistory,
         )
 
         is SetupMode.ChoosingColor -> ChoosingColorScreen(
@@ -188,15 +188,6 @@ fun NewGameSetupScreen(
                 LaunchedEffect(Unit) { mode = SetupMode.Picking }
             }
         }
-
-        is SetupMode.ConfirmingDeleteSavedGame -> ConfirmDeleteSavedGameScreen(
-            game = current.game,
-            onDelete = {
-                onDeleteSavedGame(current.game.id)
-                mode = SetupMode.Picking
-            },
-            onCancel = { mode = SetupMode.Picking },
-        )
     }
 }
 
@@ -205,19 +196,19 @@ fun NewGameSetupScreen(
 private fun PickingScreen(
     currentState: GameState,
     presets: TeamPresetLists,
-    savedGames: List<SavedGame>,
+    savedGamesCount: Int,
     usSelectedId: String?,
     themSelectedId: String?,
     onSelectUs: (String) -> Unit,
     onSelectThem: (String) -> Unit,
     onLongPress: (PresetGroup, TeamPreset) -> Unit,
-    onLongPressSavedGame: (SavedGame) -> Unit,
     onAddMyTeam: () -> Unit,
     onAddOpponent: () -> Unit,
     abbaStart: Gender?,
     onAbbaStartChange: (Gender?) -> Unit,
     onStart: () -> Unit,
     onCancel: () -> Unit,
+    onViewHistory: () -> Unit,
 ) {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -340,28 +331,18 @@ private fun PickingScreen(
             }
         }
 
-        // Score history — completed games archived via the score card's "Done" control. Placed
-        // after Start/Cancel rather than above them so picking teams and starting a quick game
-        // (the common path) stays exactly as many scrolls away as it already was; history is
-        // informational, read by continuing to scroll rather than something in the way of it.
-        item { SectionHeader("Score history") }
-
-        if (savedGames.isEmpty()) {
-            item {
-                Text(
-                    text = "No saved games yet.",
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(horizontal = 12.dp).padding(top = 4.dp),
-                )
-            }
-        } else {
-            val sorted = savedGames.sortedByDescending { it.completedAtMillis }
-            items(sorted.size) { index ->
-                val game = sorted[index]
-                SavedGameRow(game = game, onLongClick = { onLongPressSavedGame(game) })
-            }
+        // A link to the score-history screen (completed games archived via the score card's
+        // "Done" control), not the list itself — placed after Start/Cancel so picking teams and
+        // starting a quick game (the common path) stays exactly as many taps away as it already
+        // was; a growing saved-game list no longer pushes those buttons further down every game.
+        item {
+            SelectableRow(
+                label = if (savedGamesCount > 0) "Score history ($savedGamesCount)" else "Score history",
+                selected = false,
+                swatch = null,
+                trailing = "›",
+                onClick = onViewHistory,
+            )
         }
     }
 }
@@ -489,114 +470,6 @@ private fun EditingScreen(
             ) {
                 Text(text = "Done", fontSize = 14.sp)
             }
-        }
-    }
-}
-
-/**
- * Reached by long-pressing a saved-game row: delete that one completed game, or cancel. A
- * separate confirm step rather than deleting on the long-press itself — the long-press only
- * *starts* the deletion, the same as it does for a team preset's [EditingScreen] (which reaches
- * its own destructive Delete button, not an instant delete) — since removing history is
- * permanent and there's nothing else to undo it with, unlike undoing a point.
- */
-@Composable
-private fun ConfirmDeleteSavedGameScreen(game: SavedGame, onDelete: () -> Unit, onCancel: () -> Unit) {
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        item {
-            Text(
-                text = "Delete this game?",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-        }
-
-        item {
-            Text(
-                text = "${game.usTeam.name} ${game.usScore} – ${game.themScore} ${game.themTeam.name}",
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                modifier = Modifier.padding(horizontal = 12.dp).padding(top = 4.dp),
-            )
-        }
-
-        item {
-            Text(
-                text = formatSavedGameTimestamp(game.completedAtMillis),
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            )
-        }
-
-        item {
-            Box(
-                modifier = Modifier
-                    .padding(top = 14.dp)
-                    .fillMaxWidth(0.85f)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFFB00020))
-                    .clickable(onClick = onDelete),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "Delete", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            }
-        }
-
-        item {
-            Box(
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .fillMaxWidth(0.85f)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .clickable(onClick = onCancel),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "Cancel", fontSize = 14.sp)
-            }
-        }
-    }
-}
-
-/**
- * One row of the "Score history" section: the matchup, final score, and when it ended. Long-press
- * to delete (see [ConfirmDeleteSavedGameScreen]) — there's nothing to tap it *for* otherwise, so
- * unlike [SelectableRow] this has no `onClick` of its own.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun SavedGameRow(game: SavedGame, onLongClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .padding(vertical = 2.dp)
-            .fillMaxWidth(0.9f)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .combinedClickable(onClick = {}, onLongClick = onLongClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Column {
-            Text(
-                text = "${game.usTeam.name} ${game.usScore} – ${game.themScore} ${game.themTeam.name}",
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = formatSavedGameTimestamp(game.completedAtMillis),
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            )
         }
     }
 }

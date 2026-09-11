@@ -1145,3 +1145,44 @@ Deliberately **not** further verified on the real watch beyond this — completi
 anything would have destroyed Derek's actual real game/history data rather than test data, which
 wasn't this session's call to make. Score history section and a full Done→confirm→setup round
 trip on real hardware are still open for Derek (or a future session) to check.
+
+---
+
+## 21. Post-v1: score history moved to its own screen (2026-09-11)
+
+Derek asked for score history to be its own page rather than a section embedded in the new-game
+screen — the list was appended after Start/Cancel there, which meant every additional completed
+game pushed those buttons further from view on a long scroll.
+
+### What changed
+
+- New file, `ScoreHistoryScreen.kt`: the list (or empty state), reached from a single
+  `SelectableRow`-styled "Score history" nav row at the same spot the old inline section used to
+  start (still after Start/Cancel, same reasoning as before — a quick restart stays exactly as
+  many taps away). The row's label includes the count when non-empty (`"Score history (3)"`) so
+  there's something to see before tapping in. A "Back" button (same plain-pill style as every
+  other secondary action in the app) returns to wherever it was opened from.
+- Deletion (long-press a row → confirm screen) moved wholesale into this new file along with
+  `SavedGameRow`/`ConfirmDeleteSavedGameScreen` — `NewGameSetupScreen.kt`'s `SetupMode` lost its
+  `ConfirmingDeleteSavedGame` case entirely, since that flow has nothing to do with picking teams
+  any more.
+- `NewGameSetupScreen` no longer takes the full `savedGames: List<SavedGame>` — just
+  `savedGamesCount: Int` (for the nav row's label) and an `onViewHistory: () -> Unit` callback,
+  so it stays decoupled from the actual saved-game objects.
+- `WearApp` (ScoreScreen.kt) gained a `showScoreHistory` boolean alongside its existing
+  `showNewGameSetup`/`showEndGameConfirm`, checked *first* in the `when` — rather than nesting it
+  inside the `showNewGameSetup` branch or introducing a navigation stack, `showNewGameSetup` just
+  stays `true` the whole time the history screen is open on top of it, so turning
+  `showScoreHistory` back off via its own Back button falls straight back to
+  `NewGameSetupScreen` exactly where setup was left (selections, ABBA choice, scroll position all
+  intact) — no stack to manage for what is, today, only ever one level of "on top of".
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest :app:assembleDebug` — still 88/88 green (no test needed to
+change; the ViewModel-level behaviour this refactor sits on top of, `completeGame`/
+`deleteSavedGame`, is unchanged). On the emulator: the new-game screen's "Score history (2)" row
+opens the dedicated screen; long-press → delete-confirm → Delete removes the right game and the
+label updates to "Score history (1)" once back; deleting the last one shows the empty state and
+the label drops back to plain "Score history"; Back returns to the new-game screen (not the score
+card) with everything else on it unchanged.
