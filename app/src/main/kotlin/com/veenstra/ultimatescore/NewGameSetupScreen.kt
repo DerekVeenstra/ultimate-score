@@ -72,7 +72,7 @@ private sealed interface SetupMode {
 fun NewGameSetupScreen(
     currentState: GameState,
     presets: TeamPresetLists,
-    onStart: (us: TeamConfig, them: TeamConfig) -> Unit,
+    onStart: (us: TeamConfig, them: TeamConfig, abbaStart: Gender?) -> Unit,
     onCancel: () -> Unit,
     onAddPreset: (group: PresetGroup, name: String, color: TeamColor) -> TeamPreset,
     onRenamePreset: (group: PresetGroup, id: String, newName: String) -> Unit,
@@ -99,6 +99,10 @@ fun NewGameSetupScreen(
 
     val usTeam = presets.myTeams.find { it.id == usSelectedId }?.toConfig() ?: TeamConfig.DEFAULT_US
     val themTeam = presets.opponents.find { it.id == themSelectedId }?.toConfig() ?: TeamConfig.DEFAULT_THEM
+
+    // ABBA starting gender for the new game — `null` means "don't track it". Pre-populated from
+    // the game currently in progress so re-opening setup mid-game keeps the choice visible.
+    var abbaStart by remember { mutableStateOf(currentState.abbaStart) }
 
     val newMyTeamNameLauncher = rememberTextInputLauncher(label = "Team name") { typed ->
         val trimmed = typed?.trim()
@@ -129,7 +133,9 @@ fun NewGameSetupScreen(
             onLongPress = { group, preset -> mode = SetupMode.Editing(group, preset) },
             onAddMyTeam = newMyTeamNameLauncher,
             onAddOpponent = newOpponentNameLauncher,
-            onStart = { onStart(usTeam, themTeam) },
+            abbaStart = abbaStart,
+            onAbbaStartChange = { abbaStart = it },
+            onStart = { onStart(usTeam, themTeam, abbaStart) },
             onCancel = onCancel,
         )
 
@@ -192,6 +198,8 @@ private fun PickingScreen(
     onLongPress: (PresetGroup, TeamPreset) -> Unit,
     onAddMyTeam: () -> Unit,
     onAddOpponent: () -> Unit,
+    abbaStart: Gender?,
+    onAbbaStartChange: (Gender?) -> Unit,
     onStart: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -261,6 +269,24 @@ private fun PickingScreen(
                 selected = false,
                 swatch = null,
                 onClick = onAddOpponent,
+            )
+        }
+
+        item { SectionHeader("Gender ratio · ABBA") }
+
+        item { AbbaStartSelector(selected = abbaStart, onSelect = onAbbaStartChange) }
+
+        item {
+            Text(
+                text = if (abbaStart == null) {
+                    "Off"
+                } else {
+                    "Point 1 is majority ${if (abbaStart == Gender.M) "men" else "women"}"
+                },
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = 12.dp),
             )
         }
 
@@ -539,6 +565,45 @@ private fun SelectableRow(
                     text = trailing,
                     fontSize = 11.sp,
                     color = AccentColor,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A three-way segmented control — Off / M / F — for the ABBA starting gender (PLAN.md section 19).
+ * "Off" is a real option, not a separate switch, because that's the state most pickup games want
+ * and it keeps the score card looking exactly as it did before this feature.
+ */
+@Composable
+private fun AbbaStartSelector(selected: Gender?, onSelect: (Gender?) -> Unit) {
+    val options: List<Pair<String, Gender?>> =
+        listOf("Off" to null, "M" to Gender.M, "F" to Gender.F)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth(0.9f)
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        options.forEach { (label, value) ->
+            val isSelected = selected == value
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(19.dp))
+                    .background(
+                        if (isSelected) AccentColor else Color.White.copy(alpha = 0.06f),
+                    )
+                    .clickable { onSelect(value) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isSelected) Color.Black else MaterialTheme.colorScheme.onBackground,
                 )
             }
         }

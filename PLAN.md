@@ -971,3 +971,48 @@ invisible in exactly the cases that motivated it.
 `./gradlew :app:testDebugUnitTest :app:assembleDebug` — 63/63 tests green (no test covered this
 purely-visual condition), build green. Installed and confirmed on the real TicWatch via
 `dumpsys package`'s `lastUpdateTime`.
+
+---
+
+## 19. Post-v1: ABBA gender ratio (2026-09-10)
+
+Derek asked for a way to pick the mixed-Ultimate gender ratio for the first point (M or F) in
+setup, and to show the current point's ratio on the score card.
+
+### The rule
+
+"ABBA": the ratio chosen for point 1 is `A`, then the pattern is `A B B A A B B A …` — so points
+1, 4, 5, 8, 9 use the chosen start and points 2, 3, 6, 7, 10, 11 use its opposite. That's the
+whole of `genderForPoint(point, start)` in GameState.kt (`point % 4 == 1 || point % 4 == 0`).
+The "current point" is `history.size + 1` — the one the next score will complete — so the badge
+shows the ratio of the point being played right now, and stepping back with undo moves it back.
+
+### Decisions
+
+- **Off is the default and a first-class option.** Most pickup games don't run fixed ratios, and
+  a stored `Gender?` of `null` means "not tracking" — the score card then looks exactly as it did
+  before this existed, and a game saved before this feature (`abba_start` key absent) decodes to
+  the same `null`. `save()` *removes* the key when off rather than writing a sentinel, so the two
+  cases are byte-identical on disk.
+- **`Gender { M, F }`** in the model layer (no Android imports), mirroring `Team`/`TeamColor`.
+  `M`/`F` are Derek's words; the setup caption spells out "majority men / women".
+- **Setup UI:** a three-way `Off / M / F` segmented control (`AbbaStartSelector`) added to the
+  picking screen under a "Gender ratio · ABBA" header, pre-populated from the game in progress so
+  re-opening setup mid-game keeps the choice. `onStart` grew a third arg.
+- **Score card:** a small accent pill (`GenderBadge`) centred on the US/THEM divider — belongs to
+  neither side, straddles both. No gesture handler of its own, so a hold that lands on the pill
+  still falls through to the zone underneath. Only drawn when `currentGender != null`.
+- **Ambient:** one extra bare letter below the two score lines (thin light glyph, no chrome, per
+  section 3), only when tracking is on.
+
+### Persistence
+
+New `abba_start` string key in the same `game_state` DataStore. `decodeGender` returns `null` for
+absent/unknown/blank — same forgiving shape as `decodeColor`.
+
+### Verified
+
+`./gradlew :app:testDebugUnitTest :app:assembleDebug` — 72/72 tests green (9 new: ABBA pattern,
+current-point tracking through score/undo, gender codec round-trip, persistence load/save),
+build green. Not yet installed on the real TicWatch — on-device check of the setup control and
+the divider badge still pending.

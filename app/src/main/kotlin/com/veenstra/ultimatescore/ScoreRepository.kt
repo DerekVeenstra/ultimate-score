@@ -63,6 +63,13 @@ internal fun decodeColor(raw: String?): TeamColor =
     raw?.let { name -> runCatching { TeamColor.valueOf(name) }.getOrNull() } ?: TeamColor.NONE
 
 /**
+ * The stored ABBA starting gender, or `null` — which covers both "ABBA tracking is off" and a
+ * game saved before this feature existed (no key at all), and any unrecognised value.
+ */
+internal fun decodeGender(raw: String?): Gender? =
+    raw?.let { name -> runCatching { Gender.valueOf(name) }.getOrNull() }
+
+/**
  * Rebuilds a team's identity from storage. A game saved before team names/colours existed has
  * neither key, and correctly comes back as [fallback] — the plain "US"/"THEM" look.
  */
@@ -113,6 +120,7 @@ private val US_NAME_KEY = stringPreferencesKey("us_name")
 private val US_COLOR_KEY = stringPreferencesKey("us_color")
 private val THEM_NAME_KEY = stringPreferencesKey("them_name")
 private val THEM_COLOR_KEY = stringPreferencesKey("them_color")
+private val ABBA_START_KEY = stringPreferencesKey("abba_start")
 private val MY_TEAM_PRESETS_KEY = stringPreferencesKey("my_team_presets")
 private val OPPONENT_PRESETS_KEY = stringPreferencesKey("opponent_team_presets")
 private val Context.gameDataStore: DataStore<Preferences> by preferencesDataStore(name = DATASTORE_NAME)
@@ -137,6 +145,7 @@ class DataStoreScoreRepository(private val context: Context) : ScoreHistoryStore
             history = decodeHistory(prefs[HISTORY_KEY]),
             usTeam = decodeTeam(prefs[US_NAME_KEY], prefs[US_COLOR_KEY], TeamConfig.DEFAULT_US),
             themTeam = decodeTeam(prefs[THEM_NAME_KEY], prefs[THEM_COLOR_KEY], TeamConfig.DEFAULT_THEM),
+            abbaStart = decodeGender(prefs[ABBA_START_KEY]),
         )
     }
 
@@ -147,6 +156,9 @@ class DataStoreScoreRepository(private val context: Context) : ScoreHistoryStore
             prefs[US_COLOR_KEY] = state.usTeam.color.name
             prefs[THEM_NAME_KEY] = state.themTeam.name
             prefs[THEM_COLOR_KEY] = state.themTeam.color.name
+            // Off is the absence of the key, not a stored sentinel — so a game saved before this
+            // feature and one with ABBA deliberately off read back identically (decodeGender null).
+            state.abbaStart?.let { prefs[ABBA_START_KEY] = it.name } ?: prefs.remove(ABBA_START_KEY)
         }
     }
 

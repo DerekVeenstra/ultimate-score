@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -117,8 +119,8 @@ fun WearApp(viewModel: ScoreViewModel = rememberScoreViewModel()) {
                         NewGameSetupScreen(
                             currentState = state,
                             presets = presets,
-                            onStart = { us, them ->
-                                viewModel.newGame(us, them)
+                            onStart = { us, them, abbaStart ->
+                                viewModel.newGame(us, them, abbaStart)
                                 showNewGameSetup = false
                             },
                             onCancel = { showNewGameSetup = false },
@@ -251,6 +253,42 @@ fun ScoreScreen(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(footerHeight),
+        )
+
+        // The majority gender for the point being played now (ABBA rule) — a small pill on the
+        // divider's left edge so it reads as belonging to neither side. Only present when a
+        // starting gender was chosen in setup; otherwise the card looks exactly as it did before.
+        state.currentGender?.let { gender ->
+            GenderBadge(
+                gender = gender,
+                fontSize = (13 * heightRatio).coerceAtLeast(10f).sp,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The ABBA majority-gender indicator for the current point. Drawn last in [ScoreScreen] so it
+ * sits on top of the divider; it has no gesture handler of its own, so a hold started on the pill
+ * still falls through to whichever half-screen zone is underneath.
+ */
+@Composable
+private fun GenderBadge(gender: Gender, fontSize: TextUnit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(Color.White)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = gender.name,
+            fontSize = fontSize,
+            fontWeight = FontWeight.Bold,
+            color = Color.Black,
         )
     }
 }

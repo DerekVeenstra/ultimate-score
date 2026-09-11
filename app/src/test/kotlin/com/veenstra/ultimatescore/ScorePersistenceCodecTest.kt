@@ -57,6 +57,21 @@ class ScorePersistenceCodecTest {
     }
 
     @Test
+    fun `the ABBA starting gender round trips by name`() {
+        Gender.entries.forEach { gender ->
+            assertEquals(gender, decodeGender(gender.name))
+        }
+    }
+
+    @Test
+    fun `an unknown, absent, or blank ABBA gender decodes to null`() {
+        assertEquals(null, decodeGender(null))
+        assertEquals(null, decodeGender(""))
+        assertEquals(null, decodeGender("X"))
+        assertEquals(null, decodeGender("MALE"))
+    }
+
+    @Test
     fun `a team round trips its name and colour`() {
         val decoded = decodeTeam("Flaming Nipples", "PINK", TeamConfig.DEFAULT_US)
         assertEquals(TeamConfig("Flaming Nipples", TeamColor.PINK), decoded)

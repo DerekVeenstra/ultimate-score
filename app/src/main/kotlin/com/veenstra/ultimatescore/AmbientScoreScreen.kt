@@ -80,6 +80,18 @@ fun AmbientScoreScreen(state: GameState, offsetX: Dp, offsetY: Dp) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
+            // ABBA majority gender for the current point, when tracking is on. Kept to a bare
+            // letter — ambient is thin light glyphs only, no chrome (PLAN.md section 3).
+            state.currentGender?.let { gender ->
+                Text(
+                    text = gender.name,
+                    fontSize = (fontSize.value * 0.7f).sp,
+                    fontWeight = FontWeight.Light,
+                    color = AmbientTextColor,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }

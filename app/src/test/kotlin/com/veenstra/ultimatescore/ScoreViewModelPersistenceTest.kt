@@ -102,6 +102,31 @@ class ScoreViewModelPersistenceTest {
     }
 
     @Test
+    fun `starting a game with an ABBA start persists it`() {
+        val store = FakeScoreHistoryStore()
+        val vm = ScoreViewModel(historyStore = store, clock = { 0L })
+
+        vm.newGame(abbaStart = Gender.F)
+
+        assertEquals(Gender.F, store.savedState.abbaStart)
+    }
+
+    @Test
+    fun `a persisted ABBA start is restored on load`() {
+        val store = FakeScoreHistoryStore(
+            initialState = GameState(
+                history = listOf(ScoreEvent(Team.US, 1000)),
+                abbaStart = Gender.M,
+            ),
+        )
+
+        val vm = ScoreViewModel(historyStore = store)
+
+        assertEquals(Gender.M, vm.state.value.abbaStart)
+        assertEquals(Gender.F, vm.state.value.currentGender) // point 2 in progress
+    }
+
+    @Test
     fun `a persisted game restores its team names and colours, not just the score`() {
         val store = FakeScoreHistoryStore(
             initialState = GameState(

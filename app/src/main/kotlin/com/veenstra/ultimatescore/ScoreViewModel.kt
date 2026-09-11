@@ -67,11 +67,15 @@ class ScoreViewModel(
 
     fun undo() = dispatch(GameAction.Undo)
 
-    /** Starts a fresh game with the teams chosen in the setup screen (defaults to US/THEM). */
+    /**
+     * Starts a fresh game with the teams and ABBA starting gender chosen in the setup screen
+     * (all default to the plain US/THEM, no-ABBA game).
+     */
     fun newGame(
         usTeam: TeamConfig = TeamConfig.DEFAULT_US,
         themTeam: TeamConfig = TeamConfig.DEFAULT_THEM,
-    ) = dispatch(GameAction.NewGame(usTeam, themTeam))
+        abbaStart: Gender? = null,
+    ) = dispatch(GameAction.NewGame(usTeam, themTeam, abbaStart))
 
     private fun dispatch(action: GameAction) {
         _state.update { reduce(it, action, clock()) }

@@ -6,13 +6,15 @@ sealed interface GameAction {
     data object Undo : GameAction
 
     /**
-     * Starts a fresh game, adopting the team names/colours chosen in the setup screen. Both
-     * default to the plain "US"/"THEM", no-colour identities, so `NewGame()` on its own is
-     * still "reset everything to how the app looked before team colours existed".
+     * Starts a fresh game, adopting the team names/colours and the ABBA starting gender chosen in
+     * the setup screen. All default to the plain "US"/"THEM", no-colour, no-ABBA identities, so
+     * `NewGame()` on its own is still "reset everything to how the app looked before any of this
+     * existed".
      */
     data class NewGame(
         val usTeam: TeamConfig = TeamConfig.DEFAULT_US,
         val themTeam: TeamConfig = TeamConfig.DEFAULT_THEM,
+        val abbaStart: Gender? = null,
     ) : GameAction
 }
 
@@ -29,5 +31,9 @@ fun reduce(state: GameState, action: GameAction, now: Long): GameState =
         } else {
             state
         }
-        is GameAction.NewGame -> GameState(usTeam = action.usTeam, themTeam = action.themTeam)
+        is GameAction.NewGame -> GameState(
+            usTeam = action.usTeam,
+            themTeam = action.themTeam,
+            abbaStart = action.abbaStart,
+        )
     }

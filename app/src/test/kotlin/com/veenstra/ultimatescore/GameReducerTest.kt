@@ -80,6 +80,50 @@ class GameReducerTest {
     }
 
     @Test
+    fun `ABBA is off by default and shows no current gender`() {
+        assertEquals(null, GameState().abbaStart)
+        assertEquals(null, GameState().currentGender)
+    }
+
+    @Test
+    fun `new game carries the chosen ABBA starting gender`() {
+        val state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.F), now = 1000)
+        assertEquals(Gender.F, state.abbaStart)
+    }
+
+    @Test
+    fun `genderForPoint follows the ABBA pattern from an M start`() {
+        // A B B A A B B A A B ...
+        val expected = listOf(
+            Gender.M, Gender.F, Gender.F, Gender.M, Gender.M,
+            Gender.F, Gender.F, Gender.M, Gender.M, Gender.F,
+        )
+        val actual = (1..10).map { genderForPoint(it, Gender.M) }
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `genderForPoint from an F start is the mirror image`() {
+        (1..12).forEach { point ->
+            assertEquals(genderForPoint(point, Gender.M).opposite(), genderForPoint(point, Gender.F))
+        }
+    }
+
+    @Test
+    fun `currentGender tracks the point in progress as the score climbs`() {
+        var state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.M), now = 0)
+        assertEquals(Gender.M, state.currentGender) // point 1
+        state = reduce(state, GameAction.Score(Team.US), now = 1) // point 2 in progress
+        assertEquals(Gender.F, state.currentGender)
+        state = reduce(state, GameAction.Score(Team.THEM), now = 2) // point 3
+        assertEquals(Gender.F, state.currentGender)
+        state = reduce(state, GameAction.Score(Team.US), now = 3) // point 4
+        assertEquals(Gender.M, state.currentGender)
+        state = reduce(state, GameAction.Undo, now = 4) // back to point 3
+        assertEquals(Gender.F, state.currentGender)
+    }
+
+    @Test
     fun `new game clears history regardless of prior score`() {
         var state = GameState()
         state = reduce(state, GameAction.Score(Team.US), now = 1000)
