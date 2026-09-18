@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -182,33 +183,75 @@ private fun ConfirmDeleteSavedGameScreen(game: SavedGame, onDelete: () -> Unit, 
 }
 
 /**
- * One row of the score-history list: the matchup, final score, and when it ended. Long-press
- * to delete (see [ConfirmDeleteSavedGameScreen]) — there's nothing to tap it *for* otherwise, so
- * unlike `SelectableRow` this has no `onClick` of its own.
+ * One entry of the score-history list: a row per team, each tinted with that team's own colour
+ * (see [TeamConfig.color]/`backgroundArgb`) the same way the live score card halves are — so a
+ * completed game reads at a glance instead of needing the colour picked apart from plain text —
+ * plus a trophy on whichever team won and the timestamp below. Long-press to delete (see
+ * [ConfirmDeleteSavedGameScreen]) — there's nothing to tap it *for* otherwise, so unlike
+ * `SelectableRow` this has no `onClick` of its own.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SavedGameRow(game: SavedGame, onLongClick: () -> Unit) {
-    Box(
+    Column(
         modifier = Modifier
             .padding(vertical = 2.dp)
             .fillMaxWidth(0.9f)
             .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .combinedClickable(onClick = {}, onLongClick = onLongClick)
+            .combinedClickable(onClick = {}, onLongClick = onLongClick),
+    ) {
+        SavedGameTeamRow(team = game.usTeam, score = game.usScore, won = game.usScore > game.themScore)
+        SavedGameTeamRow(team = game.themTeam, score = game.themScore, won = game.themScore > game.usScore)
+        Text(
+            text = formatSavedGameTimestamp(game.completedAtMillis),
+            fontSize = 10.sp,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.06f))
+                .padding(vertical = 2.dp),
+        )
+    }
+}
+
+/**
+ * One team's half of a [SavedGameRow]: name on the left against that team's own background
+ * colour, final score clearly set off on the right (with a trophy alongside it when [won] is
+ * true) — mirrors ScoreScreen's live halves rather than inventing a new colour treatment for
+ * history.
+ */
+@Composable
+private fun SavedGameTeamRow(team: TeamConfig, score: Int, won: Boolean) {
+    val background = Color(team.color.backgroundArgb)
+    val textColor = Color(textColorArgbFor(team.color.backgroundArgb))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
-        Column {
+        Text(
+            text = team.name,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.CenterStart).fillMaxWidth(0.7f),
+        )
+        Row(
+            modifier = Modifier.align(Alignment.CenterEnd),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (won) {
+                Text(text = "🏆", fontSize = 12.sp, modifier = Modifier.padding(end = 4.dp))
+            }
             Text(
-                text = "${game.usTeam.name} ${game.usScore} – ${game.themScore} ${game.themTeam.name}",
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = formatSavedGameTimestamp(game.completedAtMillis),
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                text = score.toString(),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
             )
         }
     }
