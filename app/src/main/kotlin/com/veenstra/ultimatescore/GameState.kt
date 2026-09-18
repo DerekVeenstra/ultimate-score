@@ -4,14 +4,17 @@ package com.veenstra.ultimatescore
 enum class Team { US, THEM }
 
 /**
- * The majority gender of the line for a point, in mixed play. `M` = more men-matching players,
- * `F` = more women-matching players. One of these is chosen for the first point in setup; the
- * ABBA rule (see [genderForPoint]) derives every later point from it.
+ * The majority gender of the line for a point, in mixed play. `OPEN` = more open-matching
+ * players, `WOMEN` = more women-matching players. One of these is chosen for the first point in
+ * setup; the ABBA rule (see [genderForPoint]) derives every later point from it.
  */
 enum class Gender {
-    M, F;
+    OPEN, WOMEN;
 
-    fun opposite(): Gender = if (this == M) F else M
+    /** The single-letter form shown on the score card, e.g. "O1"/"W2" — see [genderRoundForPoint]. */
+    val code: String get() = if (this == OPEN) "O" else "W"
+
+    fun opposite(): Gender = if (this == OPEN) WOMEN else OPEN
 }
 
 /**
@@ -21,6 +24,15 @@ enum class Gender {
  */
 fun genderForPoint(point: Int, start: Gender): Gender =
     if (point % 4 == 1 || point % 4 == 0) start else start.opposite()
+
+/**
+ * Which of up to two consecutive points sharing the same ABBA gender ([genderForPoint]) this
+ * [point] is — the "1" or "2" appended to the badge's letter (e.g. "O1", "W2"). Point 1 is a lone
+ * leader before the pattern settles into pairs (2-3, 4-5, 6-7, …), so it's always round 1; after
+ * that, every even point starts a fresh pair (round 1) and the following odd point finishes it
+ * (round 2).
+ */
+fun genderRoundForPoint(point: Int): Int = if (point <= 1 || point % 2 == 0) 1 else 2
 
 /** One point being scored, at the wall-clock time it happened. */
 data class ScoreEvent(val team: Team, val atMillis: Long)

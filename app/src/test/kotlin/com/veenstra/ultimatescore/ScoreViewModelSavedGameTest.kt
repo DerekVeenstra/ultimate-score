@@ -82,7 +82,7 @@ class ScoreViewModelSavedGameTest {
         vm.newGame(
             usTeam = TeamConfig("Flaming Nipples", TeamColor.PINK),
             themTeam = TeamConfig("Sockeye", TeamColor.BLUE),
-            abbaStart = Gender.M,
+            abbaStart = Gender.OPEN,
         )
         vm.score(Team.US)
 
@@ -91,7 +91,7 @@ class ScoreViewModelSavedGameTest {
         assertTrue(vm.state.value.history.isEmpty())
         assertEquals(TeamConfig("Flaming Nipples", TeamColor.PINK), vm.state.value.usTeam)
         assertEquals(TeamConfig("Sockeye", TeamColor.BLUE), vm.state.value.themTeam)
-        assertEquals(Gender.M, vm.state.value.abbaStart)
+        assertEquals(Gender.OPEN, vm.state.value.abbaStart)
         assertTrue(vm.state.value.canUndo.not())
     }
 

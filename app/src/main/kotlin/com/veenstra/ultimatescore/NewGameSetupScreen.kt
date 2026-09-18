@@ -288,7 +288,7 @@ private fun PickingScreen(
                 text = if (abbaStart == null) {
                     "Off"
                 } else {
-                    "Point 1 is majority ${if (abbaStart == Gender.M) "men" else "women"}"
+                    "Point 1 is majority ${if (abbaStart == Gender.OPEN) "open" else "women"}"
                 },
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
@@ -593,14 +593,14 @@ private fun SelectableRow(
 }
 
 /**
- * A three-way segmented control — Off / M / F — for the ABBA starting gender (PLAN.md section 19).
+ * A three-way segmented control — Off / O / W — for the ABBA starting gender (PLAN.md section 19).
  * "Off" is a real option, not a separate switch, because that's the state most pickup games want
  * and it keeps the score card looking exactly as it did before this feature.
  */
 @Composable
 private fun AbbaStartSelector(selected: Gender?, onSelect: (Gender?) -> Unit) {
     val options: List<Pair<String, Gender?>> =
-        listOf("Off" to null, "M" to Gender.M, "F" to Gender.F)
+        listOf("Off" to null, "O" to Gender.OPEN, "W" to Gender.WOMEN)
     Row(
         modifier = Modifier
             .fillMaxWidth(0.9f)

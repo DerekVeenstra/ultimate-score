@@ -87,40 +87,48 @@ class GameReducerTest {
 
     @Test
     fun `new game carries the chosen ABBA starting gender`() {
-        val state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.F), now = 1000)
-        assertEquals(Gender.F, state.abbaStart)
+        val state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.WOMEN), now = 1000)
+        assertEquals(Gender.WOMEN, state.abbaStart)
     }
 
     @Test
-    fun `genderForPoint follows the ABBA pattern from an M start`() {
+    fun `genderForPoint follows the ABBA pattern from an OPEN start`() {
         // A B B A A B B A A B ...
         val expected = listOf(
-            Gender.M, Gender.F, Gender.F, Gender.M, Gender.M,
-            Gender.F, Gender.F, Gender.M, Gender.M, Gender.F,
+            Gender.OPEN, Gender.WOMEN, Gender.WOMEN, Gender.OPEN, Gender.OPEN,
+            Gender.WOMEN, Gender.WOMEN, Gender.OPEN, Gender.OPEN, Gender.WOMEN,
         )
-        val actual = (1..10).map { genderForPoint(it, Gender.M) }
+        val actual = (1..10).map { genderForPoint(it, Gender.OPEN) }
         assertEquals(expected, actual)
     }
 
     @Test
-    fun `genderForPoint from an F start is the mirror image`() {
+    fun `genderForPoint from a WOMEN start is the mirror image`() {
         (1..12).forEach { point ->
-            assertEquals(genderForPoint(point, Gender.M).opposite(), genderForPoint(point, Gender.F))
+            assertEquals(genderForPoint(point, Gender.OPEN).opposite(), genderForPoint(point, Gender.WOMEN))
         }
     }
 
     @Test
+    fun `genderRoundForPoint numbers each pair of same-gender points 1 then 2`() {
+        // Point 1 is a lone leader (round 1); after that, pairs: (2,3) (4,5) (6,7) (8,9) ...
+        val expected = listOf(1, 1, 2, 1, 2, 1, 2, 1, 2, 1)
+        val actual = (1..10).map { genderRoundForPoint(it) }
+        assertEquals(expected, actual)
+    }
+
+    @Test
     fun `currentGender tracks the point in progress as the score climbs`() {
-        var state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.M), now = 0)
-        assertEquals(Gender.M, state.currentGender) // point 1
+        var state = reduce(GameState(), GameAction.NewGame(abbaStart = Gender.OPEN), now = 0)
+        assertEquals(Gender.OPEN, state.currentGender) // point 1
         state = reduce(state, GameAction.Score(Team.US), now = 1) // point 2 in progress
-        assertEquals(Gender.F, state.currentGender)
+        assertEquals(Gender.WOMEN, state.currentGender)
         state = reduce(state, GameAction.Score(Team.THEM), now = 2) // point 3
-        assertEquals(Gender.F, state.currentGender)
+        assertEquals(Gender.WOMEN, state.currentGender)
         state = reduce(state, GameAction.Score(Team.US), now = 3) // point 4
-        assertEquals(Gender.M, state.currentGender)
+        assertEquals(Gender.OPEN, state.currentGender)
         state = reduce(state, GameAction.Undo, now = 4) // back to point 3
-        assertEquals(Gender.F, state.currentGender)
+        assertEquals(Gender.WOMEN, state.currentGender)
     }
 
     @Test

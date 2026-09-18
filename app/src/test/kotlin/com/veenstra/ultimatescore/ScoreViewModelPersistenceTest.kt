@@ -106,9 +106,9 @@ class ScoreViewModelPersistenceTest {
         val store = FakeScoreHistoryStore()
         val vm = ScoreViewModel(historyStore = store, clock = { 0L })
 
-        vm.newGame(abbaStart = Gender.F)
+        vm.newGame(abbaStart = Gender.WOMEN)
 
-        assertEquals(Gender.F, store.savedState.abbaStart)
+        assertEquals(Gender.WOMEN, store.savedState.abbaStart)
     }
 
     @Test
@@ -116,14 +116,14 @@ class ScoreViewModelPersistenceTest {
         val store = FakeScoreHistoryStore(
             initialState = GameState(
                 history = listOf(ScoreEvent(Team.US, 1000)),
-                abbaStart = Gender.M,
+                abbaStart = Gender.OPEN,
             ),
         )
 
         val vm = ScoreViewModel(historyStore = store)
 
-        assertEquals(Gender.M, vm.state.value.abbaStart)
-        assertEquals(Gender.F, vm.state.value.currentGender) // point 2 in progress
+        assertEquals(Gender.OPEN, vm.state.value.abbaStart)
+        assertEquals(Gender.WOMEN, vm.state.value.currentGender) // point 2 in progress
     }
 
     @Test

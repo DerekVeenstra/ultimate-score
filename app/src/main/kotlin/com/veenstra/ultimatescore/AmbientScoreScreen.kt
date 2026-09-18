@@ -84,7 +84,7 @@ fun AmbientScoreScreen(state: GameState, offsetX: Dp, offsetY: Dp) {
             // letter — ambient is thin light glyphs only, no chrome (PLAN.md section 3).
             state.currentGender?.let { gender ->
                 Text(
-                    text = gender.name,
+                    text = "${gender.code}${genderRoundForPoint(state.currentPoint)}",
                     fontSize = (fontSize.value * 0.7f).sp,
                     fontWeight = FontWeight.Light,
                     color = AmbientTextColor,

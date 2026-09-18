@@ -308,6 +308,7 @@ fun ScoreScreen(
         state.currentGender?.let { gender ->
             GenderBadge(
                 gender = gender,
+                round = genderRoundForPoint(state.currentPoint),
                 fontSize = (13 * heightRatio).coerceAtLeast(10f).sp,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
@@ -335,7 +336,12 @@ fun ScoreScreen(
  * still falls through to whichever half-screen zone is underneath.
  */
 @Composable
-private fun GenderBadge(gender: Gender, fontSize: TextUnit, modifier: Modifier = Modifier) {
+private fun GenderBadge(
+    gender: Gender,
+    round: Int,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(percent = 50))
@@ -344,7 +350,7 @@ private fun GenderBadge(gender: Gender, fontSize: TextUnit, modifier: Modifier =
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = gender.name,
+            text = "${gender.code}$round",
             fontSize = fontSize,
             fontWeight = FontWeight.Bold,
             color = Color.Black,
