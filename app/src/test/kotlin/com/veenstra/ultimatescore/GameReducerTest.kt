@@ -111,8 +111,8 @@ class GameReducerTest {
 
     @Test
     fun `genderRoundForPoint numbers each pair of same-gender points 1 then 2`() {
-        // Point 1 is a lone leader (round 1); after that, pairs: (2,3) (4,5) (6,7) (8,9) ...
-        val expected = listOf(1, 1, 2, 1, 2, 1, 2, 1, 2, 1)
+        // Point 1 finishes the opening "A" pair (round 2); after that, pairs: (2,3) (4,5) (6,7) ...
+        val expected = listOf(2, 1, 2, 1, 2, 1, 2, 1, 2, 1)
         val actual = (1..10).map { genderRoundForPoint(it) }
         assertEquals(expected, actual)
     }

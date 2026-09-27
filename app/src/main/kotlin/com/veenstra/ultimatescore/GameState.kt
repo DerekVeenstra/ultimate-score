@@ -27,12 +27,11 @@ fun genderForPoint(point: Int, start: Gender): Gender =
 
 /**
  * Which of up to two consecutive points sharing the same ABBA gender ([genderForPoint]) this
- * [point] is — the "1" or "2" appended to the badge's letter (e.g. "O1", "W2"). Point 1 is a lone
- * leader before the pattern settles into pairs (2-3, 4-5, 6-7, …), so it's always round 1; after
- * that, every even point starts a fresh pair (round 1) and the following odd point finishes it
- * (round 2).
+ * [point] is — the "1" or "2" appended to the badge's letter (e.g. "O1", "W2"). Per ABBA, point 1
+ * counts as the second half of the opening "A" pair, so it's round 2; after that, every even
+ * point starts a fresh pair (round 1) and the following odd point finishes it (round 2).
  */
-fun genderRoundForPoint(point: Int): Int = if (point <= 1 || point % 2 == 0) 1 else 2
+fun genderRoundForPoint(point: Int): Int = if (point % 2 == 0) 1 else 2
 
 /** One point being scored, at the wall-clock time it happened. */
 data class ScoreEvent(val team: Team, val atMillis: Long)
